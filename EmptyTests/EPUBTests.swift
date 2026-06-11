@@ -145,6 +145,140 @@ struct NativeChapterParserTests {
         #expect(document.blocks.compactMap(\.readerParagraph?.text).contains("第一段"))
         #expect(!document.blocks.isEmpty)
     }
+
+    @Test func bareDivTextBecomesParagraphsAndBrSplitsThem() {
+        let chapter = EPUBChapter(
+            title: "Div",
+            href: "div.xhtml",
+            content: """
+            <html><body>
+              <div>第一段</div>
+              <div>第二段<br/>第三段</div>
+            </body></html>
+            """
+        )
+
+        let document = NativeChapterParser.parse(chapter)
+
+        #expect(document.textBlocks.map(\.text) == ["第一段", "第二段", "第三段"])
+        #expect(document.blocks.compactMap(\.readerParagraph?.idx) == [0, 1, 2])
+    }
+
+    @Test func tableParsesIntoRowsWithCaption() {
+        let chapter = EPUBChapter(
+            title: "Table",
+            href: "table.xhtml",
+            content: """
+            <html><body><table id="t1">
+              <caption>对照表</caption>
+              <tr><th>原文</th><th>译文</th></tr>
+              <tr><td>empty</td><td>空</td></tr>
+            </table></body></html>
+            """
+        )
+
+        let document = NativeChapterParser.parse(chapter)
+
+        #expect(document.blocks.count == 1)
+        guard case .table(let id, let rows) = document.blocks[0] else {
+            Issue.record("Expected table block")
+            return
+        }
+        #expect(id == "t1")
+        #expect(rows == [["对照表"], ["原文", "译文"], ["empty", "空"]])
+        #expect(document.textBlocks.isEmpty)
+    }
+
+    @Test func footnoteAsideRendersAsNoteBlocks() {
+        let chapter = EPUBChapter(
+            title: "Notes",
+            href: "notes.xhtml",
+            content: """
+            <html><body>
+              <p>正文段落。</p>
+              <aside epub:type="footnote" id="fn1"><p>这是脚注内容。</p></aside>
+            </body></html>
+            """
+        )
+
+        let document = NativeChapterParser.parse(chapter)
+
+        #expect(document.blocks.count == 2)
+        guard case .footnote(_, let index, let text) = document.blocks[1] else {
+            Issue.record("Expected footnote block")
+            return
+        }
+        #expect(text == "这是脚注内容。")
+        #expect(index == 1)
+    }
+
+    @Test func preKeepsLineStructureAndIndentation() {
+        let chapter = EPUBChapter(
+            title: "Code",
+            href: "code.xhtml",
+            content: """
+            <html><body><pre>func main() {
+                print("hi")
+            }</pre></body></html>
+            """
+        )
+
+        let document = NativeChapterParser.parse(chapter)
+
+        guard case .code(_, let text) = document.blocks.first else {
+            Issue.record("Expected code block")
+            return
+        }
+        #expect(text == "func main() {\n    print(\"hi\")\n}")
+        #expect(document.blocks.first?.readerParagraph == nil)
+    }
+
+    @Test func nestedListsKeepLevelsAndOrderedMarkers() {
+        let chapter = EPUBChapter(
+            title: "List",
+            href: "list.xhtml",
+            content: """
+            <html><body><ol>
+              <li>第一项</li>
+              <li>第二项<ul><li>子项</li></ul></li>
+            </ol></body></html>
+            """
+        )
+
+        let document = NativeChapterParser.parse(chapter)
+
+        let items = document.blocks.compactMap { block -> (String, Int, String)? in
+            guard case .listItem(_, _, let text, let level, let marker) = block else { return nil }
+            return (text, level, marker)
+        }
+        #expect(items.count == 3)
+        #expect(items[0] == ("第一项", 1, "1."))
+        #expect(items[1] == ("第二项", 1, "2."))
+        #expect(items[2] == ("子项", 2, "•"))
+    }
+
+    @Test func figcaptionBecomesImageCaption() {
+        let chapter = EPUBChapter(
+            title: "Figure",
+            href: "figure.xhtml",
+            content: """
+            <html><body><figure>
+              <img src="pic.png"/>
+              <figcaption>图一：示意</figcaption>
+            </figure></body></html>
+            """
+        )
+
+        let document = NativeChapterParser.parse(chapter)
+
+        #expect(document.blocks.count == 1)
+        guard case .image(_, let source, let alt) = document.blocks.first else {
+            Issue.record("Expected image block")
+            return
+        }
+        #expect(source == "pic.png")
+        #expect(alt == "图一：示意")
+    }
 }
 
 struct NativeChapterOffsetsTests {

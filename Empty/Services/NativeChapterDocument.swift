@@ -217,7 +217,10 @@ nonisolated enum NativeChapterBlock: Equatable, Identifiable {
     case heading(id: String, level: Int, text: String)
     case paragraph(id: String, paragraphIndex: Int, text: String)
     case quote(id: String, paragraphIndex: Int, text: String)
-    case listItem(id: String, paragraphIndex: Int, text: String)
+    case listItem(id: String, paragraphIndex: Int, text: String, level: Int, marker: String)
+    case footnote(id: String, paragraphIndex: Int, text: String)
+    case code(id: String, text: String)
+    case table(id: String, rows: [[String]])
     case image(id: String, source: String, alt: String?)
 
     var id: String {
@@ -225,8 +228,13 @@ nonisolated enum NativeChapterBlock: Equatable, Identifiable {
         case .heading(let id, _, _),
              .paragraph(let id, _, _),
              .quote(let id, _, _),
-             .listItem(let id, _, _),
+             .footnote(let id, _, _),
+             .code(let id, _),
              .image(let id, _, _):
+            id
+        case .listItem(let id, _, _, _, _):
+            id
+        case .table(let id, _):
             id
         }
     }
@@ -236,10 +244,15 @@ nonisolated enum NativeChapterBlock: Equatable, Identifiable {
         case .heading(_, _, let text),
              .paragraph(_, _, let text),
              .quote(_, _, let text),
-             .listItem(_, _, let text):
+             .footnote(_, _, let text),
+             .code(_, let text):
+            text
+        case .listItem(_, _, let text, _, _):
             text
         case .image(_, _, let alt):
             alt ?? ""
+        case .table:
+            ""
         }
     }
 
@@ -247,18 +260,20 @@ nonisolated enum NativeChapterBlock: Equatable, Identifiable {
         switch self {
         case .paragraph(_, let index, let text),
              .quote(_, let index, let text),
-             .listItem(_, let index, let text):
+             .footnote(_, let index, let text):
             ReaderParagraph(idx: index, text: text)
-        case .heading, .image:
+        case .listItem(_, let index, let text, _, _):
+            ReaderParagraph(idx: index, text: text)
+        case .heading, .image, .code, .table:
             nil
         }
     }
 
     var isReadableText: Bool {
         switch self {
-        case .heading, .paragraph, .quote, .listItem:
+        case .heading, .paragraph, .quote, .listItem, .footnote, .code:
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .image:
+        case .image, .table:
             return false
         }
     }
@@ -293,7 +308,7 @@ nonisolated enum NativeChapterParser {
 
     private static func fallbackText(from html: String) -> String {
         let openedBlocksMarked = html.replacingOccurrences(
-            of: "(?i)<(p|h1|h2|h3|h4|h5|h6|blockquote|li)\\b",
+            of: "(?i)<(p|h1|h2|h3|h4|h5|h6|blockquote|li|div|section|article|tr|pre)\\b",
             with: "\n<$1",
             options: .regularExpression
         )
@@ -307,6 +322,9 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
         var id: String
         var kind: Kind
         var text = ""
+        var listLevel = 1
+        var listMarker = "•"
+        var isFootnote = false
     }
 
     private enum Kind {
@@ -314,6 +332,8 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
         case paragraph
         case quote
         case listItem
+        case code
+        case caption
     }
 
     private let chapterHref: String
@@ -323,6 +343,24 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
     private var skipDepth = 0
     private var paragraphIndex = 0
     private var blockOrdinal = 0
+
+    /// Text that appears directly inside containers (div/section/article…)
+    /// rather than in a recognized block tag — many EPUBs paragraph with
+    /// bare <div>s. Flushed into implicit paragraphs at container/block
+    /// boundaries; `\u{2028}` marks <br> so source-formatting newlines
+    /// don't split paragraphs.
+    private var strayText = ""
+    private var listStack: [(ordered: Bool, count: Int)] = []
+    private var asideStack: [Bool] = []
+    private var footnoteDepth = 0
+    private var tableDepth = 0
+    private var tableRows: [[String]] = []
+    private var tableRow: [String]?
+    private var tableCell: String?
+    private var tableID = ""
+    private var figureDepth = 0
+    private var figureImageIndex: Int?
+    private var figureCaption: String?
 
     init(chapterHref: String) {
         self.chapterHref = chapterHref
@@ -334,6 +372,11 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
         xmlParser.delegate = self
         guard xmlParser.parse() else { return nil }
         finishCurrentBlock()
+        if tableDepth > 0 {
+            tableDepth = 0
+            flushTable()
+        }
+        flushStray()
         return NativeChapterDocument(blocks: blocks)
     }
 
@@ -350,23 +393,77 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
             return
         }
 
-        if tag == "br" {
-            appendText("\n")
+        if tableDepth > 0 {
+            handleTableStart(tag, attributes: attributeDict)
             return
         }
 
-        if tag == "img" || tag == "image" {
+        switch tag {
+        case "br":
+            if current != nil {
+                appendText("\n")
+            } else {
+                strayText += "\u{2028}"
+            }
+            return
+        case "img", "image":
             appendImage(attributeDict)
             return
+        case "table":
+            flushStray()
+            finishCurrentBlock()
+            tableDepth = 1
+            tableRows = []
+            tableRow = nil
+            tableCell = nil
+            tableID = attributeDict["id"] ?? generatedID(prefix: "table")
+            return
+        case "ul", "ol":
+            if let kind = current?.kind, case .listItem = kind {
+                finishCurrentBlock()
+            }
+            flushStray()
+            listStack.append((ordered: tag == "ol", count: 0))
+            return
+        case "aside":
+            finishCurrentBlock()
+            flushStray()
+            let epubType = (attributeDict["epub:type"] ?? attributeDict["type"] ?? "").lowercased()
+            let isFootnote = epubType.contains("note")
+            asideStack.append(isFootnote)
+            if isFootnote { footnoteDepth += 1 }
+            return
+        case "figure":
+            flushStray()
+            figureDepth += 1
+            figureImageIndex = nil
+            figureCaption = nil
+            return
+        default:
+            break
         }
 
         guard let kind = Self.kind(for: tag) else { return }
+        flushStray()
+        if case .listItem = kind, let openKind = current?.kind, case .listItem = openKind {
+            finishCurrentBlock()
+        }
         if current == nil {
-            current = Draft(
+            var draft = Draft(
                 tag: tag,
                 id: attributeDict["id"] ?? generatedID(prefix: tag),
                 kind: kind
             )
+            if case .listItem = kind {
+                if !listStack.isEmpty {
+                    listStack[listStack.count - 1].count += 1
+                }
+                draft.listLevel = max(listStack.count, 1)
+                let ordered = listStack.last?.ordered ?? false
+                draft.listMarker = ordered ? "\(listStack.last?.count ?? 1)." : "•"
+            }
+            draft.isFootnote = footnoteDepth > 0
+            current = draft
             currentBlockDepth = 1
         } else {
             currentBlockDepth += 1
@@ -385,6 +482,42 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
             skipDepth -= 1
             return
         }
+
+        if tableDepth > 0 {
+            handleTableEnd(tag)
+            return
+        }
+
+        switch tag {
+        case "ul", "ol":
+            if let kind = current?.kind, case .listItem = kind {
+                finishCurrentBlock()
+            }
+            if current == nil { flushStray() }
+            if !listStack.isEmpty { listStack.removeLast() }
+            return
+        case "aside":
+            if current == nil { flushStray() }
+            if let counted = asideStack.popLast(), counted {
+                footnoteDepth = max(0, footnoteDepth - 1)
+            }
+            return
+        case "figure":
+            if current == nil { flushStray() }
+            if let caption = figureCaption, figureImageIndex == nil {
+                appendFootnoteBlock(caption, id: generatedID(prefix: "caption"))
+            }
+            figureDepth = max(0, figureDepth - 1)
+            figureImageIndex = nil
+            figureCaption = nil
+            return
+        case "div", "section", "article", "body", "main", "header", "footer", "dl":
+            if current == nil { flushStray() }
+            return
+        default:
+            break
+        }
+
         guard current != nil, Self.kind(for: tag) != nil else { return }
         currentBlockDepth -= 1
         if currentBlockDepth <= 0 {
@@ -393,12 +526,25 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
-        appendText(string)
+        appendCharacters(string)
     }
 
     func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
         guard let string = String(data: CDATABlock, encoding: .utf8) else { return }
-        appendText(string)
+        appendCharacters(string)
+    }
+
+    private func appendCharacters(_ string: String) {
+        guard skipDepth == 0 else { return }
+        if tableDepth > 0 {
+            tableCell? += string
+            return
+        }
+        if current != nil {
+            current?.text += string
+        } else {
+            strayText += string
+        }
     }
 
     private func appendText(_ text: String) {
@@ -411,12 +557,45 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
             ?? attributes["href"]
             ?? attributes["xlink:href"]
         guard let source, !source.isEmpty else { return }
-        let alt = attributes["alt"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if current != nil, let alt, !alt.isEmpty {
-            appendText(" " + alt + " ")
+        var alt = attributes["alt"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if current != nil, let inlineAlt = alt, !inlineAlt.isEmpty {
+            appendText(" " + inlineAlt + " ")
             return
         }
+        flushStray()
+        if figureDepth > 0, let caption = figureCaption, !caption.isEmpty {
+            alt = caption
+            figureCaption = nil
+        }
         blocks.append(.image(id: generatedID(prefix: "img"), source: source, alt: alt))
+        if figureDepth > 0 {
+            figureImageIndex = blocks.count - 1
+        }
+    }
+
+    private func flushStray() {
+        guard !strayText.isEmpty else { return }
+        let raw = strayText
+        strayText = ""
+        for line in raw.components(separatedBy: "\u{2028}") {
+            let text = normalize(line)
+            guard !text.isEmpty else { continue }
+            if footnoteDepth > 0 {
+                appendFootnoteBlock(text, id: generatedID(prefix: "note"))
+            } else {
+                blocks.append(.paragraph(
+                    id: generatedID(prefix: "p"),
+                    paragraphIndex: paragraphIndex,
+                    text: text
+                ))
+                paragraphIndex += 1
+            }
+        }
+    }
+
+    private func appendFootnoteBlock(_ text: String, id: String) {
+        blocks.append(.footnote(id: id, paragraphIndex: paragraphIndex, text: text))
+        paragraphIndex += 1
     }
 
     private func finishCurrentBlock() {
@@ -424,8 +603,25 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
         current = nil
         currentBlockDepth = 0
 
+        if case .code = draft.kind {
+            let text = normalizeCode(draft.text)
+            guard !text.isEmpty else { return }
+            blocks.append(.code(id: draft.id, text: text))
+            return
+        }
+
         let text = normalize(draft.text)
         guard !text.isEmpty else { return }
+
+        if draft.isFootnote {
+            switch draft.kind {
+            case .paragraph, .quote, .listItem:
+                appendFootnoteBlock(text, id: draft.id)
+                return
+            default:
+                break
+            }
+        }
 
         switch draft.kind {
         case .heading(let level):
@@ -437,9 +633,95 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
             blocks.append(.quote(id: draft.id, paragraphIndex: paragraphIndex, text: text))
             paragraphIndex += 1
         case .listItem:
-            blocks.append(.listItem(id: draft.id, paragraphIndex: paragraphIndex, text: text))
+            blocks.append(.listItem(
+                id: draft.id,
+                paragraphIndex: paragraphIndex,
+                text: text,
+                level: draft.listLevel,
+                marker: draft.listMarker
+            ))
             paragraphIndex += 1
+        case .code:
+            break
+        case .caption:
+            if figureDepth > 0, let index = figureImageIndex,
+               blocks.indices.contains(index),
+               case .image(let imageID, let source, _) = blocks[index] {
+                blocks[index] = .image(id: imageID, source: source, alt: text)
+            } else if figureDepth > 0 {
+                figureCaption = text
+            } else {
+                appendFootnoteBlock(text, id: draft.id)
+            }
         }
+    }
+
+    // MARK: Tables
+
+    private func handleTableStart(_ tag: String, attributes: [String: String]) {
+        switch tag {
+        case "table":
+            tableDepth += 1
+        case "tr" where tableDepth == 1:
+            tableRow = []
+        case "td", "th", "caption":
+            if tableDepth == 1, tableCell == nil {
+                tableCell = ""
+            } else {
+                tableCell? += " "
+            }
+        case "br":
+            tableCell? += " "
+        case "img", "image":
+            let alt = attributes["alt"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let alt, !alt.isEmpty {
+                tableCell? += " \(alt) "
+            }
+        default:
+            if Self.kind(for: tag) != nil {
+                tableCell? += " "
+            }
+        }
+    }
+
+    private func handleTableEnd(_ tag: String) {
+        switch tag {
+        case "table":
+            tableDepth -= 1
+            if tableDepth == 0 {
+                flushTable()
+            }
+        case "caption" where tableDepth == 1:
+            if let cell = tableCell {
+                let text = normalize(cell)
+                if !text.isEmpty {
+                    tableRows.append([text])
+                }
+            }
+            tableCell = nil
+        case "td", "th":
+            guard tableDepth == 1, let cell = tableCell else { return }
+            tableRow?.append(normalize(cell))
+            tableCell = nil
+        case "tr" where tableDepth == 1:
+            if let row = tableRow, row.contains(where: { !$0.isEmpty }) {
+                tableRows.append(row)
+            }
+            tableRow = nil
+        default:
+            break
+        }
+    }
+
+    private func flushTable() {
+        defer {
+            tableRows = []
+            tableRow = nil
+            tableCell = nil
+        }
+        let rows = tableRows.filter { !$0.isEmpty }
+        guard !rows.isEmpty else { return }
+        blocks.append(.table(id: tableID, rows: rows))
     }
 
     private func generatedID(prefix: String) -> String {
@@ -457,11 +739,30 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
         HTMLPlainText.extract(from: text)
             .replacingOccurrences(of: "\u{00A0}", with: " ")
             .replacingOccurrences(
-                of: "[ \\t\\r\\n]+",
+                of: "[ \\t\\r\\n\u{2028}]+",
                 with: " ",
                 options: .regularExpression
             )
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Code keeps its line structure and inner indentation; only blank
+    /// edge lines and per-line trailing whitespace are dropped.
+    private func normalizeCode(_ text: String) -> String {
+        var lines = text
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .map { line -> String in
+                var trimmed = line
+                while let last = trimmed.last, last == " " || last == "\t" {
+                    trimmed.removeLast()
+                }
+                return trimmed
+            }
+        while lines.first?.isEmpty == true { lines.removeFirst() }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.joined(separator: "\n")
     }
 
     private func sanitize(_ html: String) -> String {
@@ -496,9 +797,11 @@ private nonisolated final class NativeChapterXMLParser: NSObject, XMLParserDeleg
         case "h4": return .heading(level: 4)
         case "h5": return .heading(level: 5)
         case "h6": return .heading(level: 6)
-        case "p": return .paragraph
+        case "p", "dt", "dd": return .paragraph
         case "blockquote": return .quote
         case "li": return .listItem
+        case "pre": return .code
+        case "figcaption": return .caption
         default: return nil
         }
     }

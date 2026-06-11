@@ -40,6 +40,7 @@ private nonisolated struct NativeTextRenderModel: Equatable {
     var weight: NativeTextWeight
     var tone: NativeTextTone
     var isDark: Bool
+    var monospaced = false
     var highlightSegments: [NativeHighlightSegment]
 }
 
@@ -51,6 +52,7 @@ struct NativeSelectableTextBlockView: View {
     let tone: NativeTextTone
     let highlightRanges: [Range<Int>]
     let isDark: Bool
+    var monospaced: Bool = false
     var selectedRange: Range<Int>? = nil
     var scrollTargetOffset: Int? = nil
     var clearSelection: Bool = false
@@ -65,6 +67,7 @@ struct NativeSelectableTextBlockView: View {
                 weight: weight,
                 tone: tone,
                 isDark: isDark,
+                monospaced: monospaced,
                 highlightSegments: highlightRanges.map {
                     NativeHighlightSegment(
                         startUTF16: $0.lowerBound,
@@ -88,7 +91,7 @@ private func makeAttributedText(from model: NativeTextRenderModel) -> NSAttribut
     paragraph.paragraphSpacing = 0
 
     let attributes: [NSAttributedString.Key: Any] = [
-        .font: nativeFont(size: model.fontSize, weight: model.weight),
+        .font: nativeFont(size: model.fontSize, weight: model.weight, monospaced: model.monospaced),
         .foregroundColor: nativeTextColor(tone: model.tone, isDark: model.isDark),
         .paragraphStyle: paragraph,
     ]
@@ -125,8 +128,11 @@ private func nativeHighlightColor(isDark: Bool) -> NativePlatformColor {
 }
 
 #if canImport(UIKit)
-private func nativeFont(size: Double, weight: NativeTextWeight) -> UIFont {
+private func nativeFont(size: Double, weight: NativeTextWeight, monospaced: Bool = false) -> UIFont {
     let uiWeight: UIFont.Weight = weight == .bold ? .bold : .regular
+    if monospaced {
+        return UIFont.monospacedSystemFont(ofSize: size, weight: uiWeight)
+    }
     let base = UIFont.systemFont(ofSize: size, weight: uiWeight)
     guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
     return UIFont(descriptor: descriptor, size: size)
@@ -228,8 +234,11 @@ private struct NativeSelectableTextRepresentable: UIViewRepresentable {
     }
 }
 #elseif canImport(AppKit)
-private func nativeFont(size: Double, weight: NativeTextWeight) -> NSFont {
+private func nativeFont(size: Double, weight: NativeTextWeight, monospaced: Bool = false) -> NSFont {
     let nsWeight: NSFont.Weight = weight == .bold ? .bold : .regular
+    if monospaced {
+        return NSFont.monospacedSystemFont(ofSize: size, weight: nsWeight)
+    }
     let base = NSFont.systemFont(ofSize: size, weight: nsWeight)
     guard let descriptor = base.fontDescriptor.withDesign(.serif),
           let font = NSFont(descriptor: descriptor, size: size) else {

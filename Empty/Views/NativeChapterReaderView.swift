@@ -172,13 +172,108 @@ struct NativeChapterReaderView: View {
         case .quote:
             paragraphBlock(block, quoteStyle: true, bullet: nil)
 
-        case .listItem:
-            paragraphBlock(block, quoteStyle: false, bullet: "•")
+        case .listItem(_, _, _, let level, let marker):
+            paragraphBlock(block, quoteStyle: false, bullet: marker)
+                .padding(.leading, CGFloat(max(0, level - 1)) * 18)
+
+        case .footnote:
+            footnoteBlock(block)
+
+        case .code(_, let text):
+            codeBlock(text, block: block)
+
+        case .table(_, let rows):
+            tableBlock(rows)
+                .padding(.vertical, 10)
 
         case .image(_, let source, let alt):
             NativeReaderImageView(url: resourceURL(for: source), alt: alt)
                 .padding(.vertical, 16)
         }
+    }
+
+    private func footnoteBlock(_ block: NativeChapterBlock) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
+                Text("注")
+                    .font(.system(size: 10, weight: .bold))
+                    .kerning(1)
+                    .foregroundStyle(palette.accent)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .background(palette.accentSoft, in: RoundedRectangle(cornerRadius: 4))
+                NativeSelectableTextBlockView(
+                    text: block.text,
+                    fontSize: max(12, fontSize - 2.5),
+                    lineSpacing: textLineSpacing(for: max(12, fontSize - 2.5)),
+                    weight: .regular,
+                    tone: .secondary,
+                    highlightRanges: localHighlightRanges(for: block),
+                    isDark: palette.isDark,
+                    clearSelection: !selectionActive || activeSelectionBlockID != block.id,
+                    onSelectionChange: { updateSelection(for: block, localRange: $0) }
+                )
+            }
+            if inlineMode != .none, let paragraph = block.readerParagraph {
+                inlineNoteView(for: paragraph.idx)
+            }
+        }
+        .padding(.vertical, 6)
+        .background(visibilityProbe(for: block))
+    }
+
+    private func codeBlock(_ text: String, block: NativeChapterBlock) -> some View {
+        NativeSelectableTextBlockView(
+            text: text,
+            fontSize: max(12, fontSize - 3),
+            lineSpacing: 2.5,
+            weight: .regular,
+            tone: .primary,
+            highlightRanges: localHighlightRanges(for: block),
+            isDark: palette.isDark,
+            monospaced: true,
+            clearSelection: !selectionActive || activeSelectionBlockID != block.id,
+            onSelectionChange: { updateSelection(for: block, localRange: $0) }
+        )
+        .padding(13)
+        .background(palette.side, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(palette.line, lineWidth: 1)
+        )
+        .padding(.vertical, 8)
+    }
+
+    private func tableBlock(_ rows: [[String]]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .topLeading, horizontalSpacing: 20, verticalSpacing: 0) {
+                ForEach(rows.indices, id: \.self) { rowIndex in
+                    GridRow {
+                        ForEach(rows[rowIndex].indices, id: \.self) { cellIndex in
+                            Text(rows[rowIndex][cellIndex])
+                                .font(.system(
+                                    size: max(12, fontSize - 3),
+                                    weight: rowIndex == 0 ? .semibold : .regular,
+                                    design: .serif
+                                ))
+                                .foregroundStyle(rowIndex == 0 ? palette.ink : palette.ink2)
+                                .padding(.vertical, 7)
+                        }
+                    }
+                    if rowIndex < rows.count - 1 {
+                        Divider()
+                            .gridCellUnsizedAxes(.horizontal)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 5)
+        }
+        .background(palette.side.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(palette.line, lineWidth: 1)
+        )
     }
 
     private func paragraphBlock(
@@ -486,6 +581,7 @@ private struct NativeReaderImageView: View {
 
     @Environment(\.emptyPalette) private var palette
     @State private var loadTask: Task<Void, Never>?
+    @State private var loadFailed = false
     #if canImport(UIKit)
     @State private var image: UIImage?
     #elseif canImport(AppKit)
@@ -493,37 +589,59 @@ private struct NativeReaderImageView: View {
     #endif
 
     var body: some View {
-        Group {
-            #if canImport(UIKit)
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
+        VStack(spacing: 7) {
+            Group {
+                #if canImport(UIKit)
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    placeholder
+                }
+                #elseif canImport(AppKit)
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    placeholder
+                }
+                #else
                 placeholder
+                #endif
             }
-            #elseif canImport(AppKit)
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                placeholder
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            if isLoaded, let alt, !alt.isEmpty {
+                Text(alt)
+                    .font(.system(size: 11.5, design: .serif))
+                    .foregroundStyle(palette.ink3)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
             }
-            #else
-            placeholder
-            #endif
         }
-        .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
         .onAppear(perform: loadImage)
         .onDisappear { loadTask?.cancel() }
     }
 
+    private var isLoaded: Bool {
+        #if canImport(UIKit) || canImport(AppKit)
+        image != nil
+        #else
+        false
+        #endif
+    }
+
     private var placeholder: some View {
         VStack(spacing: 6) {
-            Image(systemName: "photo")
+            Image(systemName: loadFailed ? "photo.badge.exclamationmark" : "photo")
                 .font(.system(size: 22))
+            if loadFailed {
+                Text("插图缺失：EPUB 内未找到该图片")
+                    .font(.system(size: 11))
+            }
             if let alt, !alt.isEmpty {
                 Text(alt)
                     .font(.system(size: 11))
@@ -544,7 +662,12 @@ private struct NativeReaderImageView: View {
 
         loadTask = Task(priority: .utility) {
             guard let data = try? Data(contentsOf: url), !Task.isCancelled else {
-                await MainActor.run { loadTask = nil }
+                await MainActor.run {
+                    if !Task.isCancelled {
+                        loadFailed = true
+                    }
+                    loadTask = nil
+                }
                 return
             }
             #if canImport(UIKit)
@@ -552,6 +675,7 @@ private struct NativeReaderImageView: View {
             await MainActor.run {
                 if !Task.isCancelled {
                     image = loadedImage
+                    loadFailed = loadedImage == nil
                 }
                 loadTask = nil
             }
@@ -560,6 +684,7 @@ private struct NativeReaderImageView: View {
             await MainActor.run {
                 if !Task.isCancelled {
                     image = loadedImage
+                    loadFailed = loadedImage == nil
                 }
                 loadTask = nil
             }
