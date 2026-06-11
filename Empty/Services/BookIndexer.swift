@@ -11,8 +11,8 @@ import SwiftData
 /// before the chunking pipeline get backfilled on first use.
 ///
 /// Embedding vectors (`Chunk.embedding`) are NOT populated here — that pass
-/// is compute-heavy and belongs to a background actor (backlog); retrieval
-/// runs lexical-only until then.
+/// is compute-heavy and runs off-main in `SemanticIndexer`; retrieval falls
+/// back to lexical scoring for chunks not yet embedded.
 @MainActor
 struct BookIndexer {
     let modelContext: ModelContext

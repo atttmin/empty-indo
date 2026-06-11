@@ -16,6 +16,8 @@ struct MacNotesScreen: View {
     /// `nil` = 全部; `.review` = 待复习生词.
     @State private var filterBookID: UUID?
     @State private var showDueOnly = false
+    @State private var graphSuggestion = ""
+    @State private var isLoadingSuggestion = false
 
     private var filterableBooks: [Book] {
         var seen = Set<UUID>()
@@ -64,6 +66,14 @@ struct MacNotesScreen: View {
             .padding(.bottom, 48)
             .frame(maxWidth: .infinity)
         }
+        .task(id: suggestionTaskKey) {
+            await loadGraphSuggestion()
+        }
+    }
+
+    private var suggestionTaskKey: String {
+        let ids = visibleHighlights.prefix(5).map(\.id.uuidString).joined(separator: "-")
+        return "\(filterBookID?.uuidString ?? "all")-\(ids)"
     }
 
     private var header: some View {
@@ -136,16 +146,43 @@ struct MacNotesScreen: View {
                 }
                 MacKnowledgeGraph(
                     nodes: graphNodes,
-                    aiSuggestion: graphSuggestion
+                    aiSuggestion: isLoadingSuggestion
+                        ? "AI 正在分析你的高亮主题…"
+                        : graphSuggestion
                 )
             }
             .frame(width: 340)
         }
     }
 
-    private var graphSuggestion: String {
-        guard !highlights.isEmpty else { return "" }
-        return "AI 建议:你的 \(min(highlights.count, 3)) 个高频高亮都指向「自主注意力」。继续阅读时留意跨书呼应,图谱会自动生长。"
+    private func loadGraphSuggestion() async {
+        guard !visibleHighlights.isEmpty else {
+            graphSuggestion = ""
+            return
+        }
+        isLoadingSuggestion = true
+        defer { isLoadingSuggestion = false }
+
+        let fallback =
+            "AI 建议:你的 \(min(visibleHighlights.count, 3)) 条高亮已收录。继续阅读时留意跨书呼应,图谱会随笔记生长。"
+        let samples = visibleHighlights.prefix(5).map(\.textSnapshot).joined(separator: "\n")
+        let resolution = AIProviderSettings.load().resolveUsableService()
+        guard resolution.service.availability.isAvailable else {
+            graphSuggestion = fallback
+            return
+        }
+        do {
+            let summary = try await resolution.service.summarize(
+                samples,
+                focus: .digest
+            )
+            let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            graphSuggestion = trimmed.isEmpty
+                ? fallback
+                : "AI 建议:\(trimmed)"
+        } catch {
+            graphSuggestion = fallback
+        }
     }
 
     private var dueVocabPanel: some View {

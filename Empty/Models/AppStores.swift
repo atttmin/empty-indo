@@ -25,13 +25,16 @@ enum AppStores {
     /// (Signing & Capabilities → + iCloud → CloudKit) to turn on sync.
     /// Until then `.none` keeps behavior identical with or without
     /// entitlements.
-    private static let syncedDatabase = ModelConfiguration.CloudKitDatabase.none
+    /// Set to `.none` to run without an iCloud entitlement (local-only).
+    /// `.automatic` once `Empty.entitlements` is linked in the Xcode target.
+    private static let syncedDatabase = ModelConfiguration.CloudKitDatabase.automatic
 
     static let syncedSchema = Schema([
         Book.self,
         Highlight.self,
         ReadingSession.self,
         VocabEntry.self,
+        StudyCardEntry.self,
     ])
 
     static let localSchema = Schema([
@@ -82,6 +85,7 @@ enum AppStores {
             Highlight.self,
             ReadingSession.self,
             VocabEntry.self,
+            StudyCardEntry.self,
             Chapter.self,
             Chunk.self,
         ])

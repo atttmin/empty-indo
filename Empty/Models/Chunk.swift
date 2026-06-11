@@ -32,6 +32,12 @@ final class Chunk {
     /// the indexing pass runs.
     var embedding: Data?
 
+    /// BCP-47 tag of the `NLEmbedding` model that produced `embedding`
+    /// (e.g. "en", "zh-Hans"). Vectors from different models live in
+    /// different spaces, so retrieval only blends semantic scores when the
+    /// query was embedded with the same model.
+    var embeddingLanguage: String?
+
     var chapter: Chapter?
 
     var anchor: TextAnchor {

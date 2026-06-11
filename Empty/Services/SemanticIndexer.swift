@@ -15,13 +15,11 @@ import SwiftData
 ///     let processed = try await indexer.indexChunks(for: bookID)
 @ModelActor
 actor SemanticIndexer {
-    /// Embeds all un-indexed chunks for `bookID`.  Returns the number of
-    /// chunks successfully processed (0 if `NLEmbedding` is unavailable).
+    /// Embeds all un-indexed chunks for `bookID`, picking the embedding
+    /// model from each chunk's language (Chinese text embeds with the
+    /// zh-Hans model). Returns the number of chunks successfully processed
+    /// (0 if no `NLEmbedding` model is available).
     func indexChunks(for bookID: UUID) throws -> Int {
-        guard let embedding = NLEmbedding.sentenceEmbedding(for: .english) else {
-            return 0
-        }
-
         let descriptor = FetchDescriptor<Chunk>(
             predicate: #Predicate { chunk in
                 chunk.bookID == bookID && chunk.embedding == nil
@@ -30,12 +28,16 @@ actor SemanticIndexer {
         let chunks = try modelContext.fetch(descriptor)
         guard !chunks.isEmpty else { return 0 }
 
+        var processed = 0
         for chunk in chunks {
-            guard let vector = embedding.vector(for: chunk.text) else { continue }
-            chunk.setEmbedding(vector: vector)
+            guard let (embedding, languageTag) = SemanticScorer.embeddingModel(for: chunk.text),
+                  let vector = embedding.vector(for: chunk.text) else { continue }
+            chunk.setEmbedding(vector: vector, languageTag: languageTag)
+            processed += 1
         }
+        guard processed > 0 else { return 0 }
 
         try modelContext.save()
-        return chunks.count
+        return processed
     }
 }

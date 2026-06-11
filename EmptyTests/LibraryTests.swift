@@ -39,6 +39,17 @@ struct LibraryTests {
         #expect(try fixture.context.fetchCount(FetchDescriptor<Book>()) == 0)
     }
 
+    @Test func importRejectsPDFUntilReaderExists() throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let source = try fixture.writeSourceFile(named: "paper.pdf")
+
+        #expect(throws: LibraryError.self) {
+            try fixture.library.importBook(from: source)
+        }
+        #expect(try fixture.context.fetchCount(FetchDescriptor<Book>()) == 0)
+    }
+
     @Test func deleteRemovesRecordsDerivedDataAndFiles() throws {
         let fixture = try Fixture()
         defer { fixture.tearDown() }

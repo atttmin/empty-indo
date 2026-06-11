@@ -6,23 +6,58 @@
 import Foundation
 import NaturalLanguage
 
-/// On-device sentence-embedding relevance. Falls back silently when
-/// `NLEmbedding` is unavailable (simulator, models-not-downloaded, etc.).
+/// On-device sentence-embedding relevance, language-aware: the model is
+/// picked from the text's dominant language (Chinese books embed with the
+/// zh-Hans model, not the English one). Falls back silently when
+/// `NLEmbedding` is unavailable (simulator, models-not-downloaded,
+/// unsupported language).
 nonisolated enum SemanticScorer {
-    /// Whether the device can produce sentence embeddings right now.
-    static var isAvailable: Bool {
-        NLEmbedding.sentenceEmbedding(for: .english) != nil
+    /// A query embedded together with the model that produced it. Cosine
+    /// comparisons are only meaningful against chunk vectors from the same
+    /// model (`Chunk.embeddingLanguage`).
+    struct EmbeddedQuery {
+        let vector: [Float]
+        let languageTag: String
     }
 
-    /// Returns the 512-dim Float vector for `text`, or `nil` if the
-    /// embedding model is unavailable or the text is empty.
-    static func queryVector(for text: String) -> [Float]? {
+    /// Whether the device can produce sentence embeddings for `text`.
+    static func isAvailable(for text: String = "") -> Bool {
+        embeddingModel(for: text) != nil
+    }
+
+    /// The dominant language of `text`, defaulting to English when the
+    /// recognizer is unsure (very short queries, mixed scripts).
+    static func dominantLanguage(of text: String) -> NLLanguage {
+        NLLanguageRecognizer.dominantLanguage(for: text) ?? .english
+    }
+
+    /// The sentence-embedding model for `text`'s language, falling back to
+    /// English (the most broadly trained model) when the detected language
+    /// has no on-device model.
+    static func embeddingModel(for text: String) -> (embedding: NLEmbedding, languageTag: String)? {
+        let language = dominantLanguage(of: text)
+        if let model = NLEmbedding.sentenceEmbedding(for: language) {
+            return (model, language.rawValue)
+        }
+        if language != .english,
+           let fallback = NLEmbedding.sentenceEmbedding(for: .english) {
+            return (fallback, NLLanguage.english.rawValue)
+        }
+        return nil
+    }
+
+    /// Embeds `text` with its language's model, or `nil` if no model is
+    /// available or the text is empty.
+    static func queryVector(for text: String) -> EmbeddedQuery? {
         guard !text.isEmpty,
-              let embedding = NLEmbedding.sentenceEmbedding(for: .english) else {
+              let (embedding, languageTag) = embeddingModel(for: text),
+              let vector = embedding.vector(for: text) else {
             return nil
         }
-        guard let vector = embedding.vector(for: text) else { return nil }
-        return vector.map { Float($0) }
+        return EmbeddedQuery(
+            vector: vector.map { Float($0) },
+            languageTag: languageTag
+        )
     }
 
     /// Cosine similarity of two same-length Float vectors, 0…1.

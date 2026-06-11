@@ -7,7 +7,6 @@ import Foundation
 import SwiftData
 
 /// Spoiler-safe retrieval: ranks the chunks the reader has actually passed
-/// Spoiler-safe retrieval: ranks the chunks the reader has actually passed
 /// (`Chunk.fullyReadPredicate`).  When sentence embeddings are available the
 /// score blends cosine similarity (70 %) with lexical overlap (30 %) so
 /// conceptual questions ("why did he leave?") still hit passages that don't
@@ -34,21 +33,20 @@ struct ChunkRetriever {
         )
         guard !candidates.isEmpty else { return [] }
 
-        let queryVector = SemanticScorer.queryVector(for: question)
+        let query = SemanticScorer.queryVector(for: question)
 
         var scored: [(chunk: Chunk, score: Double)] = []
         scored.reserveCapacity(candidates.count)
         for candidate in candidates {
             let lexical = LexicalScorer.score(query: question, text: candidate.text)
-            var semantic: Double = 0
-            if let qv = queryVector, let cv = candidate.embeddingVector {
-                semantic = SemanticScorer.cosineSimilarity(qv, cv)
-            }
-            // Blend only when both sides have embeddings; otherwise keep the
-            // lexical score so un-indexed chunks don't get penalised.
-            let hasEmbedding = candidate.embeddingVector != nil
+            // Blend only when both sides were embedded by the same language
+            // model — vectors from different models live in different
+            // spaces, and un-indexed chunks must not get penalised.
             let score: Double
-            if queryVector != nil && hasEmbedding {
+            if let query,
+               candidate.embeddingLanguage == query.languageTag,
+               let cv = candidate.embeddingVector {
+                let semantic = SemanticScorer.cosineSimilarity(query.vector, cv)
                 score = semantic * 0.7 + lexical * 0.3
             } else {
                 score = lexical

@@ -13,7 +13,7 @@ nonisolated enum LibraryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFileType(let ext):
-            "“.\(ext)” files aren't supported. Import an EPUB or PDF."
+            "“.\(ext)” files aren't supported. Import an EPUB."
         }
     }
 }
@@ -26,7 +26,7 @@ struct Library {
     let fileStore: BookFileStore
 
     /// Content types the importer accepts; mirrors `BookFormat`.
-    static let importableContentTypes: [UTType] = [.epub, .pdf]
+    static let importableContentTypes: [UTType] = [.epub]
 
     init(modelContext: ModelContext, fileStore: BookFileStore) {
         self.modelContext = modelContext
@@ -43,6 +43,9 @@ struct Library {
     @discardableResult
     func importBook(from url: URL) throws -> Book {
         guard let format = BookFormat(fileExtension: url.pathExtension) else {
+            throw LibraryError.unsupportedFileType(url.pathExtension)
+        }
+        guard format == .epub else {
             throw LibraryError.unsupportedFileType(url.pathExtension)
         }
         let book = Book(

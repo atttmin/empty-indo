@@ -8,11 +8,17 @@
 import SwiftData
 import SwiftUI
 
+private enum MacStudyMode: String, CaseIterable {
+    case vocab = "生词"
+    case flashcards = "闪卡"
+}
+
 struct MacVocabScreen: View {
     @Environment(\.emptyPalette) private var palette
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \VocabEntry.dueAt) private var entries: [VocabEntry]
 
+    @State private var studyMode: MacStudyMode = .vocab
     @State private var now = Date()
     @State private var reviewIndex = 0
     @State private var revealed = false
@@ -44,14 +50,31 @@ struct MacVocabScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 header
 
-                if entries.isEmpty {
-                    emptyState
-                        .padding(.top, 28)
-                } else {
-                    reviewGrid
-                        .padding(.top, 28)
-                    allWordsSection
-                        .padding(.top, 28)
+                Picker("Study mode", selection: $studyMode) {
+                    ForEach(MacStudyMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.top, 20)
+
+                switch studyMode {
+                case .vocab:
+                    if entries.isEmpty {
+                        emptyState
+                            .padding(.top, 28)
+                    } else {
+                        reviewGrid
+                            .padding(.top, 28)
+                        allWordsSection
+                            .padding(.top, 28)
+                    }
+                case .flashcards:
+                    FlashcardsReviewView(
+                        emptyTitle: "还没有闪卡",
+                        emptyDescription: "在阅读时打开高亮列表，从一条高亮生成闪卡。"
+                    )
+                    .padding(.top, 28)
                 }
             }
             .frame(maxWidth: 1010, alignment: .leading)

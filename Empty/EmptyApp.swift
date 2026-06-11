@@ -31,7 +31,7 @@ struct EmptyApp: App {
         .defaultSize(width: 1360, height: 860)
         #else
         WindowGroup {
-            LibraryView()
+            IOSRootView()
         }
         .modelContainer(container)
         #endif

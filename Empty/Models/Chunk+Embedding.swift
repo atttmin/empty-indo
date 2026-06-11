@@ -18,9 +18,10 @@ extension Chunk {
     }
 
     /// Encodes a `[Double]` vector (from `NLEmbedding`) into little-endian
-    /// Float32 storage.
-    func setEmbedding(vector: [Double]) {
+    /// Float32 storage, recording which language model produced it.
+    func setEmbedding(vector: [Double], languageTag: String? = nil) {
         var floats = vector.map { Float($0) }
         self.embedding = Data(bytes: &floats, count: floats.count * MemoryLayout<Float>.size)
+        self.embeddingLanguage = languageTag
     }
 }

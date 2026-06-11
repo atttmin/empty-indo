@@ -18,6 +18,22 @@ struct PlainTextSearchTests {
         #expect(sliced == "专注是稀缺")
     }
 
+    @Test func mapsNormalizedDOMPrefixToUTF16Offset() throws {
+        let haystack = "First line of text\ncontinues  here   with spaces."
+        let domPrefix = "First line of text continues here"
+        let offset = PlainTextSearch.utf16Offset(
+            afterNormalizedPrefix: domPrefix,
+            in: haystack
+        )
+        #expect(offset > 0)
+
+        let resumePrefix = PlainTextSearch.normalizedPrefix(
+            of: haystack,
+            throughUTF16Offset: offset
+        )
+        #expect(resumePrefix == domPrefix)
+    }
+
     @Test func toleratesWhitespaceDivergence() throws {
         let haystack = "First line of text\ncontinues  here   with spaces."
         // The DOM rendered this with collapsed whitespace.

@@ -27,6 +27,7 @@ struct MacReaderScreen: View {
 
     @State private var epubBook: EPUBBook?
     @State private var currentChapterIndex: Int
+    @State private var currentUTF16Offset: Int
     @State private var chapterLanding: ChapterLanding = .start
     @State private var session: ReadingSession?
     @State private var isLoading = true
@@ -65,7 +66,19 @@ struct MacReaderScreen: View {
         self.onOpenVocab = onOpenVocab
         self.onOpenNotes = onOpenNotes
         _currentChapterIndex = State(initialValue: book.position.chapterIndex)
+        _currentUTF16Offset = State(initialValue: book.position.utf16Offset)
         _companion = State(initialValue: CompanionModel())
+    }
+
+    private var currentReadingPosition: ReadingPosition {
+        ReadingPosition(
+            chapterIndex: currentChapterIndex,
+            utf16Offset: currentUTF16Offset
+        )
+    }
+
+    private var resumeUTF16Offset: Int {
+        chapterLanding == .start ? currentUTF16Offset : 0
     }
 
     private var dueVocabCount: Int {
@@ -141,6 +154,8 @@ struct MacReaderScreen: View {
                                 isDarkMode: palette.isDark,
                                 lineSpacing: lineSpacing,
                                 landing: chapterLanding,
+                                resumeUTF16Offset: resumeUTF16Offset,
+                                chapterPlainText: currentChapterPlainText(),
                                 highlights: chapterHighlights,
                                 onTap: { pendingSelection = nil },
                                 onChapterBoundary: { direction in
@@ -153,7 +168,8 @@ struct MacReaderScreen: View {
                                     if let selection {
                                         Task { await detectThoughtLink(for: selection.text) }
                                     }
-                                }
+                                },
+                                onPositionChange: { updateUTF16Offset(domPrefix: $0) }
                             )
 
                             VStack(spacing: 12) {
@@ -208,10 +224,7 @@ struct MacReaderScreen: View {
                             bookTitle: epub.metadata.title,
                             chapterTitle: epub.chapters[currentChapterIndex].title,
                             highlightCount: book.highlights?.count ?? 0,
-                            position: ReadingPosition(
-                                chapterIndex: currentChapterIndex,
-                                utf16Offset: 0
-                            ),
+                            position: currentReadingPosition,
                             onClose: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     isCompanionOpen = false
@@ -239,6 +252,7 @@ struct MacReaderScreen: View {
                 currentIndex: currentChapterIndex
             ) { index in
                 currentChapterIndex = index
+                currentUTF16Offset = 0
                 chapterLanding = .start
                 showChapterList = false
                 resetChapterArtifacts()
@@ -256,7 +270,7 @@ struct MacReaderScreen: View {
         .sheet(isPresented: $showRecap) {
             RecapView(
                 book: book,
-                position: ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: 0),
+                position: currentReadingPosition,
                 cache: $recapCache
             )
             .frame(minWidth: 440, minHeight: 480)
@@ -436,6 +450,7 @@ struct MacReaderScreen: View {
             Button {
                 guard currentChapterIndex > 0 else { return }
                 currentChapterIndex -= 1
+                currentUTF16Offset = 0
                 chapterLanding = .start
             } label: {
                 Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
@@ -451,6 +466,7 @@ struct MacReaderScreen: View {
             Button {
                 guard currentChapterIndex < epub.chapters.count - 1 else { return }
                 currentChapterIndex += 1
+                currentUTF16Offset = 0
                 chapterLanding = .start
             } label: {
                 Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
@@ -464,7 +480,17 @@ struct MacReaderScreen: View {
 
             Spacer()
 
-            let progress = Double(currentChapterIndex + 1) / Double(max(epub.chapters.count, 1))
+            let chapterCount = Double(max(epub.chapters.count, 1))
+            let chapterLength = Double(
+                currentChapterPlainText()?.utf16.count ?? 1
+            )
+            let intraChapter = chapterLength > 0
+                ? Double(currentUTF16Offset) / chapterLength
+                : 0
+            let progress = min(
+                1,
+                (Double(currentChapterIndex) + intraChapter) / chapterCount
+            )
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
                 .tint(palette.accent)
@@ -532,7 +558,7 @@ struct MacReaderScreen: View {
         companion.draft = "关于「\(text.prefix(60))」"
         companion.send(
             book: book,
-            position: ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: 0),
+            position: currentReadingPosition,
             modelContext: modelContext
         )
     }
@@ -650,12 +676,33 @@ struct MacReaderScreen: View {
         case .forward:
             guard currentChapterIndex < chapterCount - 1 else { return }
             currentChapterIndex += 1
+            currentUTF16Offset = 0
             chapterLanding = .start
         case .backward:
             guard currentChapterIndex > 0 else { return }
             currentChapterIndex -= 1
+            currentUTF16Offset = 0
             chapterLanding = .end
         }
+    }
+
+    private func currentChapterPlainText() -> String? {
+        let bookID = book.id
+        let index = currentChapterIndex
+        return try? modelContext.fetch(
+            FetchDescriptor<Chapter>(
+                predicate: #Predicate { $0.bookID == bookID && $0.index == index }
+            )
+        ).first?.text
+    }
+
+    private func updateUTF16Offset(domPrefix: String) {
+        guard let plainText = currentChapterPlainText() else { return }
+        let offset = PlainTextSearch.utf16Offset(
+            afterNormalizedPrefix: domPrefix,
+            in: plainText
+        )
+        currentUTF16Offset = min(offset, plainText.utf16.count)
     }
 
     private func loadBook() {
@@ -729,10 +776,19 @@ struct MacReaderScreen: View {
 
     private func saveProgress() {
         guard let epubBook else { return }
-        let position = ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: 0)
+        let position = currentReadingPosition
         book.position = position
-        book.progressFraction =
-            Double(currentChapterIndex + 1) / Double(max(epubBook.chapters.count, 1))
+        let chapterCount = Double(max(epubBook.chapters.count, 1))
+        let chapterLength = Double(
+            currentChapterPlainText()?.utf16.count ?? 1
+        )
+        let intraChapter = chapterLength > 0
+            ? Double(currentUTF16Offset) / chapterLength
+            : 0
+        book.progressFraction = min(
+            1,
+            (Double(currentChapterIndex) + intraChapter) / chapterCount
+        )
         if let session {
             session.endedAt = Date()
             session.endPosition = position

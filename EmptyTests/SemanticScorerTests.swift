@@ -3,6 +3,7 @@
 //  EmptyTests
 //
 
+import NaturalLanguage
 import SwiftData
 import XCTest
 @testable import Empty
@@ -50,6 +51,26 @@ final class SemanticScorerTests: XCTestCase {
         XCTAssertEqual(vec[1], -0.25, accuracy: 0.0001)
         XCTAssertEqual(vec[2], 1.0, accuracy: 0.0001)
         XCTAssertEqual(vec[3], 0.0, accuracy: 0.0001)
+    }
+
+    func testEmbeddingRecordsLanguageTag() {
+        let chunk = Chunk(
+            bookID: UUID(),
+            ordinal: 0,
+            anchor: TextAnchor(chapterIndex: 0, startUTF16: 0, endUTF16: 10),
+            text: "你好世界"
+        )
+        chunk.setEmbedding(vector: [0.1, 0.2], languageTag: "zh-Hans")
+        XCTAssertEqual(chunk.embeddingLanguage, "zh-Hans")
+        chunk.setEmbedding(vector: [0.1, 0.2])
+        XCTAssertNil(chunk.embeddingLanguage)
+    }
+
+    func testDominantLanguageDetection() {
+        XCTAssertEqual(SemanticScorer.dominantLanguage(of: "凶手到底是谁？他为什么要离开小镇"), .simplifiedChinese)
+        XCTAssertEqual(SemanticScorer.dominantLanguage(of: "Why did the detective leave town?"), .english)
+        // Unrecognizable input falls back to English rather than failing.
+        XCTAssertEqual(SemanticScorer.dominantLanguage(of: ""), .english)
     }
 
     func testEmbeddingNilWhenUnset() {

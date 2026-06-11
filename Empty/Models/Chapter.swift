@@ -67,35 +67,71 @@ extension Chapter {
     /// with its title so map-reduce condense passes keep chapter identity.
     /// Empty when nothing lies behind the position.
     ///
-    /// Partial text of the in-progress chapter joins once positions carry
-    /// real intra-chapter offsets (native-pagination milestone).
+    /// Includes fully read prior chapters plus the in-progress chapter up to
+    /// `position.utf16Offset` when the offset is non-zero.
     static func fullyReadText(
         forBookID bookID: UUID,
         before position: ReadingPosition,
         in context: ModelContext
     ) throws -> String {
-        let limit = position.chapterIndex
-        guard limit > 0 else { return "" }
-
-        let descriptor = FetchDescriptor<Chapter>(
-            predicate: #Predicate { $0.bookID == bookID && $0.index < limit },
-            sortBy: [SortDescriptor(\.index)]
-        )
-        let chapters = try context.fetch(descriptor)
-
         var parts: [String] = []
-        parts.reserveCapacity(chapters.count)
-        for chapter in chapters {
-            let text = chapter.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
-            let heading: String
-            if let title = chapter.title, !title.isEmpty {
-                heading = title
-            } else {
-                heading = "Chapter \(chapter.index + 1)"
+
+        if position.chapterIndex > 0 {
+            let prior = FetchDescriptor<Chapter>(
+                predicate: #Predicate {
+                    $0.bookID == bookID && $0.index < position.chapterIndex
+                },
+                sortBy: [SortDescriptor(\.index)]
+            )
+            for chapter in try context.fetch(prior) {
+                if let block = formattedBlock(for: chapter) {
+                    parts.append(block)
+                }
             }
-            parts.append("\(heading)\n\(text)")
         }
+
+        if position.utf16Offset > 0 {
+            let current = FetchDescriptor<Chapter>(
+                predicate: #Predicate {
+                    $0.bookID == bookID && $0.index == position.chapterIndex
+                }
+            )
+            if let chapter = try context.fetch(current).first,
+               let slice = partialText(of: chapter, throughUTF16Offset: position.utf16Offset) {
+                let heading: String
+                if let title = chapter.title, !title.isEmpty {
+                    heading = title
+                } else {
+                    heading = "Chapter \(chapter.index + 1)"
+                }
+                parts.append("\(heading)\n\(slice)")
+            }
+        }
+
         return parts.joined(separator: "\n\n")
+    }
+
+    private static func formattedBlock(for chapter: Chapter) -> String? {
+        let text = chapter.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        let heading: String
+        if let title = chapter.title, !title.isEmpty {
+            heading = title
+        } else {
+            heading = "Chapter \(chapter.index + 1)"
+        }
+        return "\(heading)\n\(text)"
+    }
+
+    private static func partialText(
+        of chapter: Chapter,
+        throughUTF16Offset offset: Int
+    ) -> String? {
+        let utf16 = Array(chapter.text.utf16)
+        let clamped = min(max(offset, 0), utf16.count)
+        let slice = String(decoding: utf16[..<clamped], as: UTF16.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !slice.isEmpty else { return nil }
+        return slice
     }
 }

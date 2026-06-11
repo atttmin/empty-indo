@@ -43,6 +43,7 @@ struct ReadingView: View {
 
     @State private var epubBook: EPUBBook?
     @State private var currentChapterIndex: Int
+    @State private var currentUTF16Offset: Int
     @State private var chapterLanding: ChapterLanding = .start
     @State private var session: ReadingSession?
     @State private var isLoading = true
@@ -64,6 +65,14 @@ struct ReadingView: View {
     init(book: Book) {
         self.book = book
         _currentChapterIndex = State(initialValue: book.position.chapterIndex)
+        _currentUTF16Offset = State(initialValue: book.position.utf16Offset)
+    }
+
+    private var currentReadingPosition: ReadingPosition {
+        ReadingPosition(
+            chapterIndex: currentChapterIndex,
+            utf16Offset: currentUTF16Offset
+        )
     }
 
     var body: some View {
@@ -119,12 +128,15 @@ struct ReadingView: View {
                     isDarkMode: isDarkMode,
                     lineSpacing: lineSpacing,
                     landing: chapterLanding,
+                    resumeUTF16Offset: resumeUTF16Offset,
+                    chapterPlainText: currentChapterPlainText(),
                     highlights: chapterHighlights,
                     onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
                     onChapterBoundary: { direction in
                         crossChapterBoundary(direction, chapterCount: book.chapters.count)
                     },
-                    onSelectionChange: { pendingSelection = $0 }
+                    onSelectionChange: { pendingSelection = $0 },
+                    onPositionChange: { updateUTF16Offset(domPrefix: $0) }
                 )
 
                 if pendingSelection != nil {
@@ -150,6 +162,7 @@ struct ReadingView: View {
                 currentIndex: currentChapterIndex
             ) { index in
                 currentChapterIndex = index
+                currentUTF16Offset = 0
                 chapterLanding = .start
                 showChapterList = false
             }
@@ -172,7 +185,7 @@ struct ReadingView: View {
         .sheet(isPresented: $showRecap) {
             RecapView(
                 book: self.book,
-                position: ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: 0),
+                position: currentReadingPosition,
                 cache: $recapCache
             )
             #if os(macOS)
@@ -182,7 +195,7 @@ struct ReadingView: View {
         .sheet(isPresented: $showAsk) {
             AskBookView(
                 book: self.book,
-                position: ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: 0)
+                position: currentReadingPosition
             )
             #if os(macOS)
             .frame(minWidth: 440, minHeight: 480)
@@ -191,6 +204,7 @@ struct ReadingView: View {
         .sheet(isPresented: $showHighlights) {
             HighlightsListView(book: self.book) { chapterIndex in
                 currentChapterIndex = chapterIndex
+                currentUTF16Offset = 0
                 chapterLanding = .start
             }
             #if os(macOS)
@@ -293,6 +307,7 @@ struct ReadingView: View {
             Button {
                 if currentChapterIndex > 0 {
                     currentChapterIndex -= 1
+                    currentUTF16Offset = 0
                     chapterLanding = .start
                 }
             } label: {
@@ -308,6 +323,7 @@ struct ReadingView: View {
             Button {
                 if currentChapterIndex < book.chapters.count - 1 {
                     currentChapterIndex += 1
+                    currentUTF16Offset = 0
                     chapterLanding = .start
                 }
             } label: {
@@ -332,17 +348,42 @@ struct ReadingView: View {
         isDarkMode ? Color(hex: 0x1F1B16) : Color(hex: 0xF7F2E9)
     }
 
+    private var resumeUTF16Offset: Int {
+        chapterLanding == .start ? currentUTF16Offset : 0
+    }
+
     private func crossChapterBoundary(_ direction: PageTurnDirection, chapterCount: Int) {
         switch direction {
         case .forward:
             guard currentChapterIndex < chapterCount - 1 else { return }
             currentChapterIndex += 1
+            currentUTF16Offset = 0
             chapterLanding = .start
         case .backward:
             guard currentChapterIndex > 0 else { return }
             currentChapterIndex -= 1
+            currentUTF16Offset = 0
             chapterLanding = .end
         }
+    }
+
+    private func currentChapterPlainText() -> String? {
+        let bookID = book.id
+        let index = currentChapterIndex
+        return try? modelContext.fetch(
+            FetchDescriptor<Chapter>(
+                predicate: #Predicate { $0.bookID == bookID && $0.index == index }
+            )
+        ).first?.text
+    }
+
+    private func updateUTF16Offset(domPrefix: String) {
+        guard let plainText = currentChapterPlainText() else { return }
+        let offset = PlainTextSearch.utf16Offset(
+            afterNormalizedPrefix: domPrefix,
+            in: plainText
+        )
+        currentUTF16Offset = min(offset, plainText.utf16.count)
     }
 
     private func loadBook() {
@@ -388,10 +429,19 @@ struct ReadingView: View {
 
     private func saveProgress() {
         guard let epubBook else { return }
-        let position = ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: 0)
+        let position = currentReadingPosition
         book.position = position
-        book.progressFraction =
-            Double(currentChapterIndex + 1) / Double(max(epubBook.chapters.count, 1))
+        let chapterCount = Double(max(epubBook.chapters.count, 1))
+        let chapterLength = Double(
+            currentChapterPlainText()?.utf16.count ?? 1
+        )
+        let intraChapter = chapterLength > 0
+            ? Double(currentUTF16Offset) / chapterLength
+            : 0
+        book.progressFraction = min(
+            1,
+            (Double(currentChapterIndex) + intraChapter) / chapterCount
+        )
         if let session {
             session.endedAt = Date()
             session.endPosition = position
@@ -441,10 +491,13 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
     weak var webView: WKWebView?
     var currentChapter: String = ""
     var landing: ChapterLanding = .start
+    var resumeUTF16Offset: Int = 0
+    var chapterPlainText: String?
     var paints: [HighlightPaint] = []
     var onTap: () -> Void = {}
     var onChapterBoundary: (PageTurnDirection) -> Void = { _ in }
     var onSelectionChange: (ReaderSelection?) -> Void = { _ in }
+    var onPositionChange: (String) -> Void = { _ in }
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -479,12 +532,33 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
                     suffix: payload["suffix"] as? String ?? ""
                 )
             )
+            return
+        }
+        if let payload = message.body as? [String: Any],
+           payload["type"] as? String == "position",
+           let prefix = payload["prefix"] as? String {
+            onPositionChange(prefix)
         }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if landing == .end {
             webView.evaluateJavaScript("readerGoToEnd()")
+        } else if resumeUTF16Offset > 0,
+                  let plainText = chapterPlainText {
+            let prefix = PlainTextSearch.normalizedPrefix(
+                of: plainText,
+                throughUTF16Offset: resumeUTF16Offset
+            )
+            if let data = try? JSONEncoder().encode(prefix),
+               var json = String(data: data, encoding: .utf8) {
+                json = json
+                    .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+                    .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+                webView.evaluateJavaScript(
+                    "if (typeof readerGoToNormalizedPrefix === 'function') { readerGoToNormalizedPrefix(\(json)); }"
+                )
+            }
         }
         applyPaints(on: webView)
         #if os(macOS)
@@ -525,10 +599,13 @@ struct ChapterWebView: UIViewRepresentable {
     let isDarkMode: Bool
     let lineSpacing: Double
     let landing: ChapterLanding
+    let resumeUTF16Offset: Int
+    let chapterPlainText: String?
     let highlights: [HighlightPaint]
     let onTap: () -> Void
     let onChapterBoundary: (PageTurnDirection) -> Void
     let onSelectionChange: (ReaderSelection?) -> Void
+    let onPositionChange: (String) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -582,10 +659,13 @@ struct ChapterWebView: NSViewRepresentable {
     let isDarkMode: Bool
     let lineSpacing: Double
     let landing: ChapterLanding
+    let resumeUTF16Offset: Int
+    let chapterPlainText: String?
     let highlights: [HighlightPaint]
     let onTap: () -> Void
     let onChapterBoundary: (PageTurnDirection) -> Void
     let onSelectionChange: (ReaderSelection?) -> Void
+    let onPositionChange: (String) -> Void
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -632,9 +712,12 @@ struct ChapterWebView: NSViewRepresentable {
 extension ChapterWebView {
     private func syncCoordinator(_ bridge: ReaderBridge) {
         bridge.landing = landing
+        bridge.resumeUTF16Offset = resumeUTF16Offset
+        bridge.chapterPlainText = chapterPlainText
         bridge.onTap = onTap
         bridge.onChapterBoundary = onChapterBoundary
         bridge.onSelectionChange = onSelectionChange
+        bridge.onPositionChange = onPositionChange
     }
 
     func loadChapter(in webView: WKWebView) {
@@ -711,18 +794,66 @@ extension ChapterWebView {
         function readerPageCount() {
             return Math.max(1, Math.round(document.body.scrollWidth / pageWidth()));
         }
+        function buildNormalizedBuffer() {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            let normBuffer = '';
+            let lastWasSpace = true;
+            while (walker.nextNode()) {
+                const value = walker.currentNode.nodeValue;
+                for (let i = 0; i < value.length; i++) {
+                    if (/\\s/.test(value[i])) {
+                        if (!lastWasSpace) {
+                            normBuffer += ' ';
+                            lastWasSpace = true;
+                        }
+                    } else {
+                        normBuffer += value[i];
+                        lastWasSpace = false;
+                    }
+                }
+            }
+            return normBuffer;
+        }
+        function normalizedTextPrefixThroughPage(pageIdx) {
+            const normBuffer = buildNormalizedBuffer();
+            if (!normBuffer) { return ''; }
+            const pageCount = readerPageCount();
+            const charsPerPage = Math.max(1, Math.ceil(normBuffer.length / pageCount));
+            const endChar = Math.min((pageIdx + 1) * charsPerPage, normBuffer.length);
+            return normBuffer.slice(0, endChar);
+        }
+        function reportPosition() {
+            post({ type: 'position', prefix: normalizedTextPrefixThroughPage(pageIndex) });
+        }
         function applyPage(animated) {
             document.body.scrollTo({
                 left: pageIndex * pageWidth(),
                 top: 0,
                 behavior: animated ? 'smooth' : 'auto'
             });
+            reportPosition();
         }
         function readerGoTo(page, animated) {
             pageIndex = Math.max(0, Math.min(page, readerPageCount() - 1));
             applyPage(animated !== false);
         }
         function readerGoToEnd() { readerGoTo(readerPageCount() - 1, false); }
+        function readerGoToNormalizedPrefix(prefix) {
+            if (!prefix) { reportPosition(); return; }
+            const pageCount = readerPageCount();
+            let chosen = 0;
+            for (let page = 0; page < pageCount; page++) {
+                const slice = normalizedTextPrefixThroughPage(page);
+                if (slice.length <= prefix.length && prefix.startsWith(slice)) {
+                    chosen = page;
+                }
+                if (slice.length >= prefix.length) {
+                    chosen = page;
+                    break;
+                }
+            }
+            readerGoTo(chosen, false);
+        }
         function readerNext() {
             if (pageIndex >= readerPageCount() - 1) { return false; }
             readerGoTo(pageIndex + 1);
@@ -807,6 +938,9 @@ extension ChapterWebView {
         }, { passive: true });
         // Window resizes reflow the columns; stay on the kept page.
         window.addEventListener('resize', function () { readerGoTo(pageIndex, false); });
+        window.addEventListener('load', function () {
+            requestAnimationFrame(function () { reportPosition(); });
+        });
         // Tap zones: left quarter = previous page, right quarter = next,
         // middle = toggle controls. Link clicks and swipe-tail clicks are
         // left alone.
