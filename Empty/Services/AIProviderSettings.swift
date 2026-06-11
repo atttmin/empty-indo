@@ -9,14 +9,25 @@ import Foundation
 nonisolated enum AIProviderMode: String, CaseIterable, Sendable {
     /// Apple's Foundation Models: free, offline, private — the default.
     case onDevice
-    /// An OpenAI-compatible endpoint (DeepSeek preset) with the user's key.
+    /// A hosted endpoint (DeepSeek / Kimi presets) with the user's key.
     case cloud
+}
+
+/// Which wire protocol the cloud endpoint speaks. Empty supports both
+/// standards so a provider can be reached however it's cleanest: DeepSeek
+/// speaks OpenAI chat-completions; Kimi Code's coding endpoint gates the
+/// OpenAI path behind approved-client User-Agents but serves the Anthropic
+/// Messages path with just an API key, so Kimi uses Anthropic.
+nonisolated enum CloudProtocol: String, CaseIterable, Sendable {
+    case openAI
+    case anthropic
 }
 
 /// Persisted provider choice. Only non-secrets live in UserDefaults;
 /// the API key goes through `KeychainStore`.
 nonisolated struct AIProviderSettings: Equatable, Sendable {
     var mode: AIProviderMode = .onDevice
+    var cloudProtocol: CloudProtocol = .openAI
     var cloudBaseURL: String = Self.deepSeekBaseURL
     var cloudModel: String = Self.deepSeekModel
 
@@ -25,11 +36,17 @@ nonisolated struct AIProviderSettings: Equatable, Sendable {
     static let deepSeekModel = "deepseek-v4-flash"
     /// Deeper-reasoning sibling for heavier analysis (argument maps etc.).
     static let deepSeekProModel = "deepseek-v4-pro"
+    /// Kimi Code (Kimi membership), Anthropic-compatible base. The Messages
+    /// client appends `/v1/messages`. The stable alias tracks Moonshot's
+    /// latest coding model. Keys: Kimi Code Console (kimi.com/code/console).
+    static let kimiBaseURL = "https://api.kimi.com/coding"
+    static let kimiModel = "kimi-for-coding"
     /// Keychain account under which the cloud key is stored.
     static let apiKeyAccount = "cloud-provider-api-key"
 
     private enum Keys {
         static let mode = "ai.provider.mode"
+        static let cloudProtocol = "ai.cloud.protocol"
         static let baseURL = "ai.cloud.baseURL"
         static let model = "ai.cloud.model"
     }
@@ -39,6 +56,10 @@ nonisolated struct AIProviderSettings: Equatable, Sendable {
         if let raw = defaults.string(forKey: Keys.mode),
            let mode = AIProviderMode(rawValue: raw) {
             settings.mode = mode
+        }
+        if let raw = defaults.string(forKey: Keys.cloudProtocol),
+           let proto = CloudProtocol(rawValue: raw) {
+            settings.cloudProtocol = proto
         }
         if let baseURL = defaults.string(forKey: Keys.baseURL), !baseURL.isEmpty {
             settings.cloudBaseURL = baseURL
@@ -60,6 +81,7 @@ nonisolated struct AIProviderSettings: Equatable, Sendable {
 
     func save(to defaults: UserDefaults = .standard) {
         defaults.set(mode.rawValue, forKey: Keys.mode)
+        defaults.set(cloudProtocol.rawValue, forKey: Keys.cloudProtocol)
         defaults.set(cloudBaseURL, forKey: Keys.baseURL)
         defaults.set(cloudModel, forKey: Keys.model)
     }
@@ -74,13 +96,24 @@ nonisolated struct AIProviderSettings: Equatable, Sendable {
         case .onDevice:
             return FoundationModelsAIService()
         case .cloud:
-            return CloudAIService(
-                configuration: CloudAIService.Configuration(
-                    baseURLString: cloudBaseURL,
-                    model: cloudModel,
-                    apiKey: apiKey ?? ""
+            switch cloudProtocol {
+            case .openAI:
+                return CloudAIService(
+                    configuration: CloudAIService.Configuration(
+                        baseURLString: cloudBaseURL,
+                        model: cloudModel,
+                        apiKey: apiKey ?? ""
+                    )
                 )
-            )
+            case .anthropic:
+                return AnthropicAIService(
+                    configuration: AnthropicAIService.Configuration(
+                        baseURLString: cloudBaseURL,
+                        model: cloudModel,
+                        apiKey: apiKey ?? ""
+                    )
+                )
+            }
         }
     }
 

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Two cloud standards behind the same `AIService` protocol: the existing
+  OpenAI-compatible `CloudAIService` plus a native Anthropic Messages API
+  client (`AnthropicAIService`) — `system` param, content blocks,
+  `x-api-key` + `anthropic-version`, reusing the cloud JSON parsers for
+  grounded answers / flashcards / agent steps; no third-party dependency
+- **Kimi Code** preset (Kimi membership): reached over the
+  Anthropic-compatible coding endpoint, which a key alone unlocks — the
+  OpenAI coding endpoint gates non-coding-agent clients behind an
+  approved User-Agent, the Anthropic one doesn't, so Empty uses it. AI
+  状态 gains an 接口标准 (OpenAI 兼容 / Anthropic 兼容) picker and a Kimi
+  preset; `cloudProtocol` persists and existing DeepSeek configs default
+  to OpenAI
+- OpenAI-compatible path retries once without `response_format` when an
+  endpoint rejects JSON mode (narrow detection — never on auth/quota
+  errors, so no extra billed calls)
+
 - 朱 · AI 伴读 is now a **reading agent**, not just RAG chat: the model
   decides which reading tools to use per question (`ReadingAgent` loop,
   ≤3 steps on-device / ≤4 cloud), with the step trace shown in the

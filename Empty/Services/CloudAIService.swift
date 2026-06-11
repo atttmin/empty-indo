@@ -178,7 +178,24 @@ final class CloudAIService: AIService {
 
     // MARK: - Networking
 
+    /// True when a provider error says the endpoint rejected JSON mode —
+    /// the one failure worth retrying without `response_format` (the
+    /// prompts already demand JSON, so parsing still works).
+    static func isJSONModeRejection(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("response_format") || lowered.contains("json_object")
+    }
+
     private func chat(user: String, jsonResponse: Bool = false) async throws -> String {
+        do {
+            return try await chatOnce(user: user, jsonResponse: jsonResponse)
+        } catch AIServiceError.providerError(let message)
+            where jsonResponse && Self.isJSONModeRejection(message) {
+            return try await chatOnce(user: user, jsonResponse: false)
+        }
+    }
+
+    private func chatOnce(user: String, jsonResponse: Bool) async throws -> String {
         guard let base = URL(string: configuration.baseURLString) else {
             throw AIServiceError.modelUnavailable("The cloud base URL is invalid.")
         }

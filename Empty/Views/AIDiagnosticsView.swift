@@ -109,10 +109,41 @@ struct AIDiagnosticsView: View {
             providerCard(
                 mode: .cloud,
                 title: "Cloud · BYOK",
-                vendor: "OpenAI 兼容接口",
-                detail: "自带密钥接云端模型,内置 DeepSeek 预设。"
+                vendor: "OpenAI / Anthropic 兼容",
+                detail: "自带密钥接云端模型,内置 DeepSeek 与 Kimi 预设。"
             )
         }
+    }
+
+    /// OpenAI-compatible vs Anthropic-compatible wire protocol.
+    private var protocolPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("接口标准")
+                .font(.system(size: 10.5, weight: .semibold))
+                .kerning(0.8)
+                .foregroundStyle(palette.ink3)
+            HStack(spacing: 0) {
+                protocolSegment("OpenAI 兼容", value: .openAI)
+                protocolSegment("Anthropic 兼容", value: .anthropic)
+            }
+            .padding(3)
+            .background(palette.accentSoft, in: Capsule())
+        }
+    }
+
+    private func protocolSegment(_ title: String, value: CloudProtocol) -> some View {
+        let isActive = settings.cloudProtocol == value
+        return Button {
+            settings.cloudProtocol = value
+        } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isActive ? palette.accent : palette.ink2)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(isActive ? palette.card : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private func providerCard(
@@ -172,6 +203,7 @@ struct AIDiagnosticsView: View {
 
     private var cloudConfig: some View {
         VStack(alignment: .leading, spacing: 12) {
+            protocolPicker
             configField("Base URL") {
                 TextField("https://…", text: $settings.cloudBaseURL)
                     .autocorrectionDisabled()
@@ -195,8 +227,31 @@ struct AIDiagnosticsView: View {
                 Text("预设")
                     .font(.system(size: 11))
                     .foregroundStyle(palette.ink3)
-                presetChip("DeepSeek Flash", model: AIProviderSettings.deepSeekModel)
-                presetChip("DeepSeek Pro", model: AIProviderSettings.deepSeekProModel)
+                presetChip(
+                    "DeepSeek Flash",
+                    proto: .openAI,
+                    baseURL: AIProviderSettings.deepSeekBaseURL,
+                    model: AIProviderSettings.deepSeekModel
+                )
+                presetChip(
+                    "DeepSeek Pro",
+                    proto: .openAI,
+                    baseURL: AIProviderSettings.deepSeekBaseURL,
+                    model: AIProviderSettings.deepSeekProModel
+                )
+                presetChip(
+                    "Kimi Code",
+                    proto: .anthropic,
+                    baseURL: AIProviderSettings.kimiBaseURL,
+                    model: AIProviderSettings.kimiModel
+                )
+            }
+
+            if settings.cloudBaseURL == AIProviderSettings.kimiBaseURL {
+                Text("Kimi Code 走 Anthropic 兼容接口(会员 Code 权益,无需 OpenAI 端点的客户端白名单)。密钥在 kimi.com/code/console 创建。")
+                    .font(.system(size: 11))
+                    .lineSpacing(3)
+                    .foregroundStyle(palette.ink3)
             }
         }
         .padding(16)
@@ -226,11 +281,19 @@ struct AIDiagnosticsView: View {
         }
     }
 
-    private func presetChip(_ title: String, model: String) -> some View {
+    private func presetChip(
+        _ title: String,
+        proto: CloudProtocol,
+        baseURL: String,
+        model: String
+    ) -> some View {
         let isActive = settings.cloudModel == model
-            && settings.cloudBaseURL == AIProviderSettings.deepSeekBaseURL
+            && settings.cloudBaseURL == baseURL
+            && settings.cloudProtocol == proto
         return Button {
-            applyDeepSeekPreset(model: model)
+            settings.cloudProtocol = proto
+            settings.cloudBaseURL = baseURL
+            settings.cloudModel = model
         } label: {
             Text(title)
                 .font(.system(size: 11, weight: isActive ? .semibold : .regular))
@@ -346,11 +409,6 @@ struct AIDiagnosticsView: View {
 
     private var resolvedAvailability: AIAvailability {
         settings.resolveService(apiKey: apiKey).availability
-    }
-
-    private func applyDeepSeekPreset(model: String) {
-        settings.cloudBaseURL = AIProviderSettings.deepSeekBaseURL
-        settings.cloudModel = model
     }
 
     private func persistAPIKey(_ key: String) {
