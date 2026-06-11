@@ -1295,6 +1295,10 @@ struct MacReaderScreen: View {
     private func pretranslate(from startChapter: Int) async {
         let resolution = AIProviderSettings.load().resolveUsableService()
         guard resolution.service.availability.isAvailable else { return }
+        // Whole-chapter pretranslation saturates the machine when the
+        // model runs locally — reading janks. On-device stays
+        // per-viewport; only cloud providers cache ahead.
+        guard resolution.route == .cloud else { return }
         let store = TranslationStore(modelContext: modelContext)
         let bookID = book.id
         let chapters = (try? modelContext.fetch(

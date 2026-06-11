@@ -46,6 +46,7 @@ struct NativeChapterReaderView: View {
     @State private var lastVisibleParagraphs: [ReaderParagraph] = []
     @State private var lastPositionPrefix = ""
     @State private var activeSelectionBlockID: String?
+    @State private var settleTask: Task<Void, Never>?
 
     init(
         chapter: EPUBChapter,
@@ -473,8 +474,20 @@ struct NativeChapterReaderView: View {
         }
     }
 
+    /// Preference changes arrive on every scroll frame; the downstream
+    /// work (translation-cache lookups, chapter-text position math) is
+    /// far too heavy for that, so reports wait for the scroll to settle.
     private func updateVisibleParagraphs(_ frames: [NativeParagraphFrame]) {
         guard viewportHeight > 0 else { return }
+        settleTask?.cancel()
+        settleTask = Task {
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            reportVisibleParagraphs(frames)
+        }
+    }
+
+    private func reportVisibleParagraphs(_ frames: [NativeParagraphFrame]) {
         let visible = frames
             .filter { $0.maxY >= 0 && $0.minY <= viewportHeight }
             .sorted { lhs, rhs in lhs.minY < rhs.minY }

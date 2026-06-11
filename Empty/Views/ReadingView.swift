@@ -135,6 +135,7 @@ struct ReadingView: View {
     @AppStorage("reader.lineSpacing") private var lineSpacing: Double = 1.6
     @AppStorage("reader.theme") private var readerTheme: ReaderTheme = .paper
     @AppStorage("reader.font") private var readerFont: ReaderFont = .serif
+    @AppStorage("reader.pageturn.ios") private var pageTurn: ReaderPageTurn = .paged
     @AppStorage("reader.mode.ios") private var readingMode: IOSReadingMode = .original
     @State private var inlineNotes: [InlineNotePaint] = []
     @State private var inlineCache: [Int: String] = [:]
@@ -227,6 +228,34 @@ struct ReadingView: View {
         }
     }
 
+    private func scrollingReader(_ book: EPUBBook) -> some View {
+        NativeChapterReaderView(
+            chapter: book.chapters[currentChapterIndex],
+            basePath: book.basePath,
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            landing: chapterLanding,
+            resumeUTF16Offset: resumeUTF16Offset,
+            chapterPlainText: currentChapterPlainText(),
+            highlights: chapterHighlights,
+            inlineMode: inlineNoteKind,
+            inlineLayout: .stacked,
+            inlineNotes: inlineNotes,
+            appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+            selectionActive: pendingSelection != nil,
+            onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
+            onChapterBoundary: { direction in
+                crossChapterBoundary(direction, chapterCount: book.chapters.count)
+            },
+            onSelectionChange: { handleSelectionChange($0) },
+            onPositionChange: { updateUTF16Offset(domPrefix: $0) },
+            onVisibleParagraphs: { handleVisibleParagraphs($0) },
+            onPageInfo: { page, count in
+                chapterPageInfo = (page: page, count: count)
+            }
+        )
+    }
+
     @ViewBuilder
     private func readerContent(_ book: EPUBBook) -> some View {
         VStack(spacing: 0) {
@@ -240,31 +269,40 @@ struct ReadingView: View {
             }
 
             ZStack(alignment: .bottom) {
-                NativeChapterReaderView(
-                    chapter: book.chapters[currentChapterIndex],
-                    basePath: book.basePath,
-                    fontSize: fontSize,
-                    lineSpacing: lineSpacing,
-                    landing: chapterLanding,
-                    resumeUTF16Offset: resumeUTF16Offset,
-                    chapterPlainText: currentChapterPlainText(),
-                    highlights: chapterHighlights,
-                    inlineMode: inlineNoteKind,
-                    inlineLayout: .stacked,
-                    inlineNotes: inlineNotes,
-                    appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
-                    selectionActive: pendingSelection != nil,
-                    onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
-                    onChapterBoundary: { direction in
-                        crossChapterBoundary(direction, chapterCount: book.chapters.count)
-                    },
-                    onSelectionChange: { handleSelectionChange($0) },
-                    onPositionChange: { updateUTF16Offset(domPrefix: $0) },
-                    onVisibleParagraphs: { handleVisibleParagraphs($0) },
-                    onPageInfo: { page, count in
-                        chapterPageInfo = (page: page, count: count)
+                Group {
+                    #if os(iOS)
+                    if pageTurn == .paged {
+                        PagedChapterReaderView(
+                            chapter: book.chapters[currentChapterIndex],
+                            basePath: book.basePath,
+                            fontSize: fontSize,
+                            lineSpacing: lineSpacing,
+                            landing: chapterLanding,
+                            resumeUTF16Offset: resumeUTF16Offset,
+                            chapterPlainText: currentChapterPlainText(),
+                            highlights: chapterHighlights,
+                            inlineMode: inlineNoteKind,
+                            inlineNotes: inlineNotes,
+                            appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+                            selectionActive: pendingSelection != nil,
+                            onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
+                            onChapterBoundary: { direction in
+                                crossChapterBoundary(direction, chapterCount: book.chapters.count)
+                            },
+                            onSelectionChange: { handleSelectionChange($0) },
+                            onPositionChange: { updateUTF16Offset(domPrefix: $0) },
+                            onVisibleParagraphs: { handleVisibleParagraphs($0) },
+                            onPageInfo: { page, count in
+                                chapterPageInfo = (page: page, count: count)
+                            }
+                        )
+                    } else {
+                        scrollingReader(book)
                     }
-                )
+                    #else
+                    scrollingReader(book)
+                    #endif
+                }
                 .id(currentChapterIndex)
 
                 readerOverlay
@@ -291,7 +329,8 @@ struct ReadingView: View {
                 fontSize: $fontSize,
                 lineSpacing: $lineSpacing,
                 theme: $readerTheme,
-                font: $readerFont
+                font: $readerFont,
+                pageTurn: $pageTurn
             )
             #if os(iOS)
             .presentationDetents([.medium])
@@ -1004,6 +1043,10 @@ struct ReadingView: View {
     private func pretranslate(from startChapter: Int) async {
         let resolution = AIProviderSettings.load().resolveUsableService()
         guard resolution.service.availability.isAvailable else { return }
+        // Whole-chapter pretranslation saturates the device when the
+        // model runs locally — reading janks and the battery drains.
+        // On-device stays per-viewport; only cloud providers cache ahead.
+        guard resolution.route == .cloud else { return }
         let store = TranslationStore(modelContext: modelContext)
         let bookID = book.id
         let chapters = (try? modelContext.fetch(
@@ -1321,6 +1364,7 @@ struct ReadingSettingsView: View {
     @Binding var lineSpacing: Double
     @Binding var theme: ReaderTheme
     @Binding var font: ReaderFont
+    var pageTurn: Binding<ReaderPageTurn>? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.emptyPalette) private var palette
@@ -1382,6 +1426,17 @@ struct ReadingSettingsView: View {
                         ForEach(ReaderTheme.allCases, id: \.self) { choice in
                             themeSwatch(choice)
                         }
+                    }
+                }
+                if let pageTurn {
+                    settingRow(label: "翻页方式") {
+                        Picker("", selection: pageTurn) {
+                            ForEach(ReaderPageTurn.allCases, id: \.self) { choice in
+                                Text(choice.title).tag(choice)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
                     }
                 }
                 Text("\u{201C}I went to the woods because I wished to live deliberately…\u{201D}")

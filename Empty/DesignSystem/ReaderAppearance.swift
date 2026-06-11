@@ -134,3 +134,16 @@ nonisolated struct ReaderAppearance: Equatable {
     var theme: ReaderTheme = .paper
     var font: ReaderFont = .serif
 }
+
+/// How the iOS reader advances text (Mac always scrolls).
+nonisolated enum ReaderPageTurn: String, CaseIterable {
+    case paged
+    case scroll
+
+    var title: String {
+        switch self {
+        case .paged: "左右翻页"
+        case .scroll: "上下滚动"
+        }
+    }
+}
