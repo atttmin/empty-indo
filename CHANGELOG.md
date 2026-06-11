@@ -17,15 +17,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Language-aware sentence embeddings: semantic indexing and retrieval now
   pick the embedding model from the text's language (Chinese supported),
   instead of hardcoding English
+- Flashcards: generate study cards from highlights (`StudyCardEntry`,
+  `StudyCardStore`) and review them with the Ebbinghaus ladder on the Mac
+  vocab screen and the new iOS Study tab (`FlashcardsReviewView`)
+- iOS root tabs: Library / Notes / Study, bringing vocab review and
+  highlight notes to iPhone and iPad
+- CloudKit sync enabled: `Empty.entitlements` + synced store on
+  `.automatic`
+- Mac notes screen AI theme suggestion for the knowledge graph
 
 ### Fixed
 
+- `StudyCardEntry.book` now has an inverse relationship on `Book`
+  (`studyCards`, cascade delete) — CloudKit refuses to initialize a synced
+  store containing inverse-less relationships, which crashed the app at
+  launch with sync enabled; deleting a book also no longer orphans its
+  study cards
 - Removed duplicated doc-comment line in `ChunkRetriever`
 - `BookIndexer` doc comment no longer claims the embedding pass is
   unimplemented (`SemanticIndexer` exists and is wired into ask-the-book)
-- Docs: test suite status updated to 79/79 passing (the previously noted
+- Docs: test suite status updated (the previously noted
   `SemanticScorerTests.testRetrieverFallsBackToLexical` failure no longer
   reproduces)
+
+### Known limitations
+
+- PDF text selection and in-document highlights not yet supported
+- Building with the iCloud entitlement requires a paid developer team;
+  local test runs can disable signing (`CODE_SIGNING_ALLOWED=NO`)
 
 ## [1.0.0] - 2026-06-11
 
@@ -43,10 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vermilion (朱批) design system for Mac UI
 - Unit test suite (~79 tests) covering persistence, EPUB, retrieval, highlights, recap, cloud AI
 
-### Known limitations
+### Known limitations (at 1.0.0; all addressed in Unreleased)
 
-- Reading position tracked at chapter level only (`utf16Offset` not yet reported from reader; fixed in Unreleased)
-- PDF text selection and in-document highlights not yet supported
+- Reading position tracked at chapter level only
+- PDF import supported; PDF reading not implemented
 - CloudKit sync prepared but disabled (`syncedDatabase = .none`)
 - Flashcard generation implemented in services; no UI yet
 - iOS lacks vocab/notes screens (Mac-only)

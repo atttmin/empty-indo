@@ -100,7 +100,11 @@ xcodebuild -scheme Empty -destination 'platform=macOS' \
   -only-testing:EmptyTests test
 ```
 
-当前 **82/82** 单元测试全部通过。
+> 项目带有 iCloud entitlement，个人开发者账号无法为其签名。
+> 本地跑测试可关闭签名：在上述命令后追加
+> `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""`。
+
+当前 **87/87** 单元测试全部通过。
 
 ---
 
@@ -119,9 +123,10 @@ xcodebuild -scheme Empty -destination 'platform=macOS' \
              │                       │
    ┌─────────▼─────────┐   ┌─────────▼─────────┐
    │  Synced Store     │   │  Local Store      │
-   │  (CloudKit-ready) │   │  (device-only)    │
+   │  (CloudKit)       │   │  (device-only)    │
    │  Book, Highlight  │   │  Chapter, Chunk   │
    │  Session, Vocab   │   │  + embeddings     │
+   │  StudyCard        │   │                   │
    └───────────────────┘   └───────────────────┘
 ```
 

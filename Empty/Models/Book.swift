@@ -83,6 +83,11 @@ final class Book {
     @Relationship(deleteRule: .cascade, inverse: \ReadingSession.book)
     var sessions: [ReadingSession]?
 
+    // CloudKit requires every relationship to carry an inverse; without this
+    // the `.automatic` synced container fails to initialize at launch.
+    @Relationship(deleteRule: .cascade, inverse: \StudyCardEntry.book)
+    var studyCards: [StudyCardEntry]?
+
     init(title: String, author: String = "", format: BookFormat) {
         self.title = title
         self.author = author

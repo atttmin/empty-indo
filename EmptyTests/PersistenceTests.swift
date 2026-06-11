@@ -51,6 +51,25 @@ struct PersistenceTests {
         #expect(try context.fetchCount(FetchDescriptor<ReadingSession>()) == 0)
     }
 
+    @Test func deletingBookCascadesToStudyCards() throws {
+        let container = try AppStores.makeContainer(ephemeral: true)
+        let context = container.mainContext
+
+        let book = Book(title: "Book", format: .epub)
+        context.insert(book)
+        let card = StudyCardEntry(question: "Q?", answer: "A.")
+        context.insert(card)
+        card.book = book
+        try context.save()
+
+        #expect(try context.fetchCount(FetchDescriptor<StudyCardEntry>()) == 1)
+
+        context.delete(book)
+        try context.save()
+
+        #expect(try context.fetchCount(FetchDescriptor<StudyCardEntry>()) == 0)
+    }
+
     @Test func chapterTextRoundTripsAndCachesLength() throws {
         let container = try AppStores.makeContainer(ephemeral: true)
         let context = container.mainContext
