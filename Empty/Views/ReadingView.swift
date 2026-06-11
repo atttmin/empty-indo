@@ -32,6 +32,28 @@ nonisolated struct HighlightPaint: Codable, Equatable {
     var text: String
 }
 
+/// Reader text mode — the prototype's 原文 / 双语对照 / 导读 toggle,
+/// expressed as the token pushed into the chapter page's script.
+nonisolated enum InlineNoteKind: String {
+    case none
+    case bilingual = "bi"
+    case companion = "comp"
+}
+
+/// One in-flow AI note (a paragraph's translation or 导读 paraphrase),
+/// keyed by the paragraph's index in the chapter DOM.
+nonisolated struct InlineNotePaint: Codable, Equatable {
+    var idx: Int
+    var text: String
+}
+
+/// A paragraph on the currently visible page, reported by the web view so
+/// inline-note modes can translate exactly what the reader is looking at.
+nonisolated struct ReaderParagraph: Equatable {
+    var idx: Int
+    var text: String
+}
+
 /// WebView-based EPUB reader with CSS-column pagination: one column per
 /// page, horizontal paging, spoiler-free chapter crossing at the edges.
 /// Reading position and sessions persist through the SwiftData `Book`.
@@ -246,13 +268,27 @@ struct ReadingView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                PDFReaderView(
-                    documentURL: documentURL,
-                    pageIndex: $currentChapterIndex,
-                    onPageChange: syncPageProgress
-                )
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() }
+                ZStack(alignment: .bottom) {
+                    PDFReaderView(
+                        documentURL: documentURL,
+                        pageIndex: $currentChapterIndex,
+                        highlights: chapterHighlights,
+                        onPageChange: syncPageProgress,
+                        onSelectionChange: { pendingSelection = $0 }
+                    )
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() }
+                    }
+
+                    if pendingSelection != nil {
+                        Button {
+                            saveHighlight()
+                        } label: {
+                            Label("Highlight", systemImage: "highlighter")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.bottom, 28)
+                    }
                 }
 
                 if showControls {
@@ -304,6 +340,7 @@ struct ReadingView: View {
                 #endif
             }
             .onChange(of: currentChapterIndex) { _, newIndex in
+                pendingSelection = nil
                 syncPageProgress(at: newIndex)
             }
             .onChange(of: showHighlights) { _, isShowing in
@@ -699,10 +736,14 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
     var resumeUTF16Offset: Int = 0
     var chapterPlainText: String?
     var paints: [HighlightPaint] = []
+    var inlineKind: InlineNoteKind = .none
+    var inlineNotes: [InlineNotePaint] = []
     var onTap: () -> Void = {}
     var onChapterBoundary: (PageTurnDirection) -> Void = { _ in }
     var onSelectionChange: (ReaderSelection?) -> Void = { _ in }
     var onPositionChange: (String) -> Void = { _ in }
+    var onVisibleParagraphs: ([ReaderParagraph]) -> Void = { _ in }
+    var onPageInfo: (Int, Int) -> Void = { _, _ in }
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -743,6 +784,24 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
            payload["type"] as? String == "position",
            let prefix = payload["prefix"] as? String {
             onPositionChange(prefix)
+            if let page = payload["page"] as? Int,
+               let pageCount = payload["pageCount"] as? Int {
+                onPageInfo(page, pageCount)
+            }
+            return
+        }
+        if let payload = message.body as? [String: Any],
+           payload["type"] as? String == "paragraphs",
+           let items = payload["items"] as? [[String: Any]] {
+            let paragraphs = items.compactMap { item -> ReaderParagraph? in
+                guard let idx = item["idx"] as? Int,
+                      let text = item["text"] as? String,
+                      !text.isEmpty else { return nil }
+                return ReaderParagraph(idx: idx, text: text)
+            }
+            if !paragraphs.isEmpty {
+                onVisibleParagraphs(paragraphs)
+            }
         }
     }
 
@@ -766,6 +825,8 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
             }
         }
         applyPaints(on: webView)
+        applyInlineMode(on: webView)
+        applyInlineNotes(on: webView)
         #if os(macOS)
         // Keyboard paging only reaches the page while the web view is the
         // first responder; reclaim it after every chapter load.
@@ -783,6 +844,27 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
             .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
         webView.evaluateJavaScript(
             "if (typeof paintHighlights === 'function') { paintHighlights(\(json)); }"
+        )
+    }
+
+    /// Tells the page which inline-note mode is active (原文/双语/导读).
+    func applyInlineMode(on webView: WKWebView) {
+        webView.evaluateJavaScript(
+            "if (typeof readerSetInlineMode === 'function') { readerSetInlineMode('\(inlineKind.rawValue)'); }"
+        )
+    }
+
+    /// Pushes translated/导读 paragraph notes into the page. The page skips
+    /// indices it has already rendered, so resending the full list is safe.
+    func applyInlineNotes(on webView: WKWebView) {
+        guard inlineKind != .none, !inlineNotes.isEmpty else { return }
+        guard let data = try? JSONEncoder().encode(inlineNotes),
+              var json = String(data: data, encoding: .utf8) else { return }
+        json = json
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+        webView.evaluateJavaScript(
+            "if (typeof readerApplyInlineNotes === 'function') { readerApplyInlineNotes(\(json)); }"
         )
     }
 
@@ -807,10 +889,14 @@ struct ChapterWebView: UIViewRepresentable {
     let resumeUTF16Offset: Int
     let chapterPlainText: String?
     let highlights: [HighlightPaint]
+    var inlineMode: InlineNoteKind = .none
+    var inlineNotes: [InlineNotePaint] = []
     let onTap: () -> Void
     let onChapterBoundary: (PageTurnDirection) -> Void
     let onSelectionChange: (ReaderSelection?) -> Void
     let onPositionChange: (String) -> Void
+    var onVisibleParagraphs: ([ReaderParagraph]) -> Void = { _ in }
+    var onPageInfo: (Int, Int) -> Void = { _, _ in }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -826,6 +912,8 @@ struct ChapterWebView: UIViewRepresentable {
         syncCoordinator(context.coordinator)
         context.coordinator.currentChapter = chapter.href
         context.coordinator.paints = highlights
+        context.coordinator.inlineKind = inlineMode
+        context.coordinator.inlineNotes = inlineNotes
         loadChapter(in: webView)
         return webView
     }
@@ -835,6 +923,8 @@ struct ChapterWebView: UIViewRepresentable {
         if context.coordinator.currentChapter != chapter.href {
             context.coordinator.currentChapter = chapter.href
             context.coordinator.paints = highlights
+            context.coordinator.inlineKind = inlineMode
+            context.coordinator.inlineNotes = inlineNotes
             loadChapter(in: webView)
         } else {
             webView.evaluateJavaScript(
@@ -843,6 +933,15 @@ struct ChapterWebView: UIViewRepresentable {
             if context.coordinator.paints != highlights {
                 context.coordinator.paints = highlights
                 context.coordinator.applyPaints(on: webView)
+            }
+            if context.coordinator.inlineKind != inlineMode {
+                context.coordinator.inlineKind = inlineMode
+                context.coordinator.inlineNotes = inlineNotes
+                context.coordinator.applyInlineMode(on: webView)
+                context.coordinator.applyInlineNotes(on: webView)
+            } else if context.coordinator.inlineNotes != inlineNotes {
+                context.coordinator.inlineNotes = inlineNotes
+                context.coordinator.applyInlineNotes(on: webView)
             }
         }
     }

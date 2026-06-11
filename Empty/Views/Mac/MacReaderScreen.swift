@@ -177,45 +177,7 @@ struct MacReaderScreen: View {
                                 onPositionChange: { updateUTF16Offset(domPrefix: $0) }
                             )
 
-                            VStack(spacing: 12) {
-                                if let marginNote {
-                                    ZhupiCallout(title: "朱批 · 划词解释") {
-                                        Text(marginNote)
-                                            .font(.system(size: 12.5))
-                                            .lineSpacing(5)
-                                            .foregroundStyle(palette.ink2)
-                                    }
-                                    .padding(.horizontal, 24)
-                                }
-
-                                if let glossEntry {
-                                    glossCard(glossEntry)
-                                        .padding(.horizontal, 24)
-                                }
-
-                                if let thoughtLink {
-                                    MacThoughtLinkCard(
-                                        link: thoughtLink,
-                                        isExpanded: thoughtLinkExpanded,
-                                        onToggle: { thoughtLinkExpanded.toggle() },
-                                        onOpenNotes: onOpenNotes,
-                                        onAsk: { askAboutSelection(thoughtLink.explanation) }
-                                    )
-                                }
-
-                                if pendingSelection != nil {
-                                    MacSelectionPopover(
-                                        onExplain: { runSelectionAction(.explain) },
-                                        onTranslate: { runSelectionAction(.translate) },
-                                        onAsk: { runSelectionAction(.ask) },
-                                        onHighlight: saveHighlight,
-                                        onVocab: { runSelectionAction(.vocab) },
-                                        isLoading: isSelectionWorking
-                                    )
-                                    .padding(.bottom, 8)
-                                }
-                            }
-                            .padding(.bottom, 20)
+                            selectionOverlay
                         }
                         Rectangle().fill(palette.line).frame(height: 1)
                         bottomBar(epub)
@@ -336,12 +298,25 @@ struct MacReaderScreen: View {
 
                     HStack(spacing: 0) {
                         VStack(spacing: 0) {
-                            PDFReaderView(
-                                documentURL: documentURL,
-                                pageIndex: $currentChapterIndex,
-                                onPageChange: syncPageProgress
-                            )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            ZStack(alignment: .bottom) {
+                                PDFReaderView(
+                                    documentURL: documentURL,
+                                    pageIndex: $currentChapterIndex,
+                                    highlights: chapterHighlights,
+                                    onPageChange: syncPageProgress,
+                                    onSelectionChange: { selection in
+                                        pendingSelection = selection
+                                        marginNote = nil
+                                        glossEntry = nil
+                                        if let selection {
+                                            Task { await detectThoughtLink(for: selection.text) }
+                                        }
+                                    }
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                                selectionOverlay
+                            }
 
                             Rectangle().fill(palette.line).frame(height: 1)
                             pdfBottomBar
@@ -569,6 +544,51 @@ struct MacReaderScreen: View {
         }
         .padding(.horizontal, 24)
         .frame(height: 44)
+    }
+
+    /// Floating cards over the reading surface: margin note, vocab gloss,
+    /// thought link, and the selection action popover. Shared by the EPUB
+    /// and PDF readers.
+    private var selectionOverlay: some View {
+        VStack(spacing: 12) {
+            if let marginNote {
+                ZhupiCallout(title: "朱批 · 划词解释") {
+                    Text(marginNote)
+                        .font(.system(size: 12.5))
+                        .lineSpacing(5)
+                        .foregroundStyle(palette.ink2)
+                }
+                .padding(.horizontal, 24)
+            }
+
+            if let glossEntry {
+                glossCard(glossEntry)
+                    .padding(.horizontal, 24)
+            }
+
+            if let thoughtLink {
+                MacThoughtLinkCard(
+                    link: thoughtLink,
+                    isExpanded: thoughtLinkExpanded,
+                    onToggle: { thoughtLinkExpanded.toggle() },
+                    onOpenNotes: onOpenNotes,
+                    onAsk: { askAboutSelection(thoughtLink.explanation) }
+                )
+            }
+
+            if pendingSelection != nil {
+                MacSelectionPopover(
+                    onExplain: { runSelectionAction(.explain) },
+                    onTranslate: { runSelectionAction(.translate) },
+                    onAsk: { runSelectionAction(.ask) },
+                    onHighlight: saveHighlight,
+                    onVocab: { runSelectionAction(.vocab) },
+                    isLoading: isSelectionWorking
+                )
+                .padding(.bottom, 8)
+            }
+        }
+        .padding(.bottom, 20)
     }
 
     private var modeGuideBanner: some View {

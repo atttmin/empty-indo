@@ -104,7 +104,7 @@ xcodebuild -scheme Empty -destination 'platform=macOS' \
 > 本地跑测试可关闭签名：在上述命令后追加
 > `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""`。
 
-当前 **87/87** 单元测试全部通过。
+当前 **91/91** 单元测试全部通过。
 
 ---
 
@@ -185,6 +185,7 @@ git push -u origin main
 - [x] iOS 词汇 / 笔记 / 学习 Tab
 - [x] CloudKit 同步（`Empty.entitlements` + SwiftData `.automatic`）
 - [x] PDF 阅读支持（PDFKit 分页阅读 + 按页索引）
+- [x] PDF 划词与高亮（选区接入 AI 操作，高亮以 PDF 注释渲染）
 - [x] Mac 笔记屏 AI 主题建议
 
 完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。

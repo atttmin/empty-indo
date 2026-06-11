@@ -33,6 +33,9 @@ final class Chapter {
     /// Lazily cached AI condensation of this chapter (the expensive "map"
     /// half of recap); cleared implicitly when the chapter row is rebuilt.
     var cachedSummary: String?
+    /// Cached three-part chapter outline in `ChapterOutline` line format,
+    /// backing the reader's structured 章节概览 card.
+    var cachedOutline: String?
 
     var text: String {
         get { String(decoding: textData, as: UTF8.self) }

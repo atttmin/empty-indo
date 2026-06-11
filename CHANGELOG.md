@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - PDF reading: import `.pdf` files, native PDFKit viewer with per-page
   navigation, progress tracking, and AI indexing via per-page `Chapter` rows
+- PDF text selection and highlights: selections report through the same
+  `ReaderSelection` pipeline as EPUB (highlight button on iOS; explain /
+  translate / ask / vocab popover on Mac), and stored highlights paint as
+  PDF annotations on the visible page
 - Intra-chapter reading position: the paginated reader now reports the
   furthest visible character (`utf16Offset`) on every page turn, so
   spoiler-safe retrieval includes already-read text from the current chapter
@@ -42,7 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- PDF text selection and in-document highlights not yet supported
 - Building with the iCloud entitlement requires a paid developer team;
   local test runs can disable signing (`CODE_SIGNING_ALLOWED=NO`)
 

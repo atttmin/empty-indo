@@ -17,6 +17,70 @@ import CoreText
 
 @MainActor
 struct PDFTests {
+    // MARK: - Selection context
+
+    @Test func selectionContextTakesSurroundingPageText() {
+        let pageText = String(repeating: "a", count: 100)
+            + "the murder weapon"
+            + String(repeating: "b", count: 100)
+        let range = NSRange(location: 100, length: 17)
+
+        let selection = PDFSelectionContext.readerSelection(
+            pageText: pageText,
+            selectedText: "the murder weapon",
+            range: range
+        )
+
+        #expect(selection.text == "the murder weapon")
+        #expect(selection.prefix == String(repeating: "a", count: 40))
+        #expect(selection.suffix == String(repeating: "b", count: 40))
+    }
+
+    @Test func selectionContextClampsAtPageEdges() {
+        let pageText = "short page"
+        let selection = PDFSelectionContext.readerSelection(
+            pageText: pageText,
+            selectedText: "short",
+            range: NSRange(location: 0, length: 5)
+        )
+        #expect(selection.prefix.isEmpty)
+        #expect(selection.suffix == " page")
+    }
+
+    @Test func selectionContextSurvivesInvalidRange() {
+        let selection = PDFSelectionContext.readerSelection(
+            pageText: "anything",
+            selectedText: "  selected  ",
+            range: NSRange(location: NSNotFound, length: 0)
+        )
+        #expect(selection.text == "selected")
+        #expect(selection.prefix.isEmpty)
+        #expect(selection.suffix.isEmpty)
+    }
+
+    @Test func selectionContextKeepsSurrogatePairsIntact() {
+        // Each "🜁" is 2 UTF-16 units. Layout below puts the 40-unit prefix
+        // window's start (offset 10) in the middle of the pair spanning
+        // 9–10, and the suffix window's end mid-pair symmetrically — the
+        // boundaries must round to composed-character edges instead of
+        // slicing pairs into U+FFFD.
+        let pageText = "a" + String(repeating: "🜁", count: 24) + "z"
+            + "needle"
+            + "z" + String(repeating: "🜁", count: 24) + "a"
+        let range = NSRange(location: 50, length: 6)
+
+        let selection = PDFSelectionContext.readerSelection(
+            pageText: pageText,
+            selectedText: "needle",
+            range: range
+        )
+
+        #expect(!selection.prefix.contains("\u{FFFD}"))
+        #expect(!selection.suffix.contains("\u{FFFD}"))
+        #expect(selection.prefix.hasSuffix("z"))
+        #expect(selection.suffix.hasPrefix("z"))
+    }
+
     @Test func parserExtractsPerPageText() throws {
         let fixture = try PDFFixture()
         defer { fixture.tearDown() }

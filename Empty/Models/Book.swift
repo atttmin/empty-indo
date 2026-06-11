@@ -77,6 +77,13 @@ final class Book {
     /// Cached 0…1 fraction for library UI; maintained by the reader.
     var progressFraction: Double = 0
 
+    /// Cached "朱批 · 上次读到" teaser for the library hero — a spoiler-safe
+    /// recap of everything before the current chapter. Regenerated when
+    /// `cachedHeroRecapChapterIndex` no longer matches the position.
+    var cachedHeroRecap: String?
+    /// Chapter index `cachedHeroRecap` was built for.
+    var cachedHeroRecapChapterIndex: Int?
+
     @Relationship(deleteRule: .cascade, inverse: \Highlight.book)
     var highlights: [Highlight]?
 
