@@ -22,6 +22,9 @@ Packages/
 Package.pins
 Package.resolved
 
+# Cloudflare Wrangler
+.wrangler/
+
 # macOS
 .DS_Store
 .AppleDouble
