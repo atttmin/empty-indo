@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>空 · Empty — AI 伴读</title>
+  <meta name="description" content="空 · Empty：在不剧透的前提下，用 AI 帮你深读 EPUB 与 PDF。Mac 深读工作台，iOS 随身伴读。">
+  <meta property="og:title" content="空 · Empty — AI 伴读">
+  <meta property="og:description" content="空是底，朱是点。防剧透 AI 阅读伴侣。">
+  <meta property="og:image" content="/assets/screenshots/mac-reader.jpg">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="/assets/icon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/icon-ios.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top">
+      <img src="/assets/icon.png" alt="" width="32" height="32" class="brand-icon">
+      <span class="brand-text">空 <span class="brand-dot">·</span> Empty</span>
+    </a>
+    <nav class="nav">
+      <a href="#features">特性</a>
+      <a href="#screenshots">截图</a>
+      <a href="#download">下载</a>
+      <a href="https://github.com/DaviRain-Su/empty" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+    <a class="btn btn-primary btn-sm header-cta" href="#download">免费获取</a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">AI 伴读 · 深读工作台</p>
+        <h1>空是底，<em>朱</em>是点</h1>
+        <p class="lead">
+          多平台阅读应用：在<strong>不剧透</strong>的前提下，用 AI 帮你摘要、问书、记笔记、复习词汇。
+          Mac 是完整的深读工作台；iPhone / iPad 是随身伴读。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" id="hero-mac" href="#download">下载 Mac 版</a>
+          <a class="btn btn-secondary" id="hero-ios" href="#download">iPhone 测试版</a>
+        </div>
+        <p class="hero-note">EPUB + PDF · 本地 Apple Intelligence · 可选云端 BYOK</p>
+      </div>
+      <div class="hero-visual">
+        <div class="device-frame mac-frame">
+          <img src="/assets/screenshots/mac-reader.jpg" alt="Mac 深读工作台：书库、阅读器与 AI 伴读侧栏" width="1200" height="750" loading="eager">
+        </div>
+      </div>
+    </section>
+
+    <section class="pillars">
+      <article>
+        <span class="pillar-icon">📖</span>
+        <h3>深读，不剧透</h3>
+        <p>所有 AI 只基于你已读过的文本。数据层过滤未读内容，而非仅靠 prompt。</p>
+      </article>
+      <article>
+        <span class="pillar-icon">朱</span>
+        <h3>页边那一笔朱批</h3>
+        <p>Recap、问书、双语对照、词汇释义、思维链接——AI 像批注一样落在页边。</p>
+      </article>
+      <article>
+        <span class="pillar-icon">☁️</span>
+        <h3>你的书，你的 AI</h3>
+        <p>默认本机 Apple Intelligence；也可自带 API Key，密钥存 Keychain。</p>
+      </article>
+    </section>
+
+    <section id="features" class="features">
+      <div class="section-head">
+        <h2>为深读者设计</h2>
+        <p>从导入到复习，一条完整的阅读学习闭环。</p>
+      </div>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>EPUB & PDF 阅读</h4>
+          <p>WebKit 分栏分页与 PDFKit 原生阅读，暗色模式、字体行距、高亮与进度同步。</p>
+        </div>
+        <div class="feature-card">
+          <h4>防剧透 AI</h4>
+          <p>章节摘要、Previously-on Recap、问书伴读、逐段双语与导读，全部 grounded 于已读段落。</p>
+        </div>
+        <div class="feature-card">
+          <h4>Mac 工作台</h4>
+          <p>书库 / 阅读 / 笔记 / 词汇四屏，知识图谱、闪卡复习、朗读与 AI 诊断面板。</p>
+        </div>
+        <div class="feature-card">
+          <h4>iOS 随身伴读</h4>
+          <p>书库、阅读、卡片 Tab；「朱」半屏 AI、「译」逐段双语、思维链接与今日伴读。</p>
+        </div>
+        <div class="feature-card">
+          <h4>学习工具</h4>
+          <p>Ebbinghaus 间隔复习、高亮生成闪卡、词汇挖空例句与跨书主题关联。</p>
+        </div>
+        <div class="feature-card">
+          <h4>隐私优先</h4>
+          <p>书籍正文存本地；同步的是你的高亮、进度与笔记。CloudKit 已接入。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="screenshots" class="screenshots">
+      <div class="section-head">
+        <h2>界面一览</h2>
+        <p>朱批 Vermilion 设计系统——暖纸底色，朱砂点睛。</p>
+      </div>
+      <div class="screenshot-gallery">
+        <figure class="shot shot-wide">
+          <img src="/assets/screenshots/mac-reader.jpg" alt="macOS 深读工作台" loading="lazy">
+          <figcaption>macOS · 书库 + 阅读 + 朱 · AI 伴读</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="/assets/screenshots/ios-library.jpg" alt="iOS 书库" loading="lazy">
+          <figcaption>iOS · 书库</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="/assets/screenshots/ios-reading.jpg" alt="iOS 阅读与 AI" loading="lazy">
+          <figcaption>iOS · 阅读 + 朱批 AI</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="download" class="download">
+      <div class="section-head">
+        <h2>获取 Empty</h2>
+        <p>选择你的平台。TestFlight 与 App Store 链接可在下方配置更新。</p>
+      </div>
+      <div class="download-grid">
+        <a class="download-card" id="dl-mac" href="#" target="_blank" rel="noopener">
+          <span class="dl-platform">macOS</span>
+          <strong>Mac 版</strong>
+          <p>深读工作台完整体验。需要 macOS 26.2+。</p>
+          <span class="dl-cta">下载 <span aria-hidden="true">→</span></span>
+          <span class="dl-badge" id="badge-mac">GitHub Release</span>
+        </a>
+        <a class="download-card" id="dl-appstore" href="#" target="_blank" rel="noopener">
+          <span class="dl-platform">App Store</span>
+          <strong>iPhone & iPad</strong>
+          <p>正式版上架后从此处下载。</p>
+          <span class="dl-cta">App Store <span aria-hidden="true">→</span></span>
+          <span class="dl-badge badge-soon" id="badge-appstore">即将上架</span>
+        </a>
+        <a class="download-card download-card-accent" id="dl-testflight" href="#" target="_blank" rel="noopener">
+          <span class="dl-platform">TestFlight</span>
+          <strong>内测版</strong>
+          <p>抢先体验 iOS 随身伴读。名额有限。</p>
+          <span class="dl-cta">加入测试 <span aria-hidden="true">→</span></span>
+          <span class="dl-badge badge-beta" id="badge-testflight">Beta</span>
+        </a>
+      </div>
+      <p class="download-foot">
+        开发者？<a href="https://github.com/DaviRain-Su/empty">克隆仓库</a>用 Xcode 26+ 本地构建。
+        系统要求：iOS / macOS 26.2。
+      </p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="/assets/icon.png" alt="" width="28" height="28">
+        <span>空 · Empty</span>
+      </div>
+      <p class="footer-tag">空是底，朱是点 —— 应用是空房间，AI 是页边那一笔朱批。</p>
+      <div class="footer-links">
+        <a href="https://github.com/DaviRain-Su/empty">GitHub</a>
+        <a href="https://github.com/DaviRain-Su/empty/blob/main/LICENSE">MIT License</a>
+        <a href="https://github.com/DaviRain-Su/empty/blob/main/docs/ARCHITECTURE.md">架构文档</a>
+      </div>
+      <p class="footer-copy">© 2026 davirian</p>
+    </div>
+  </footer>
+
+  <script src="/main.js"></script>
+</body>
+</html>
