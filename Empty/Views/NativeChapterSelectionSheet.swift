@@ -12,13 +12,14 @@ struct NativeChapterSelectionSheet: View {
     let highlights: [HighlightPaint]
     let fontSize: Double
     let lineSpacing: Double
+    let focusUTF16Offset: Int
     let initialSelection: ReaderSelection?
     let onApply: (ReaderSelection) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.emptyPalette) private var palette
     @State private var draftSelection: ReaderSelection?
-
+    @State private var requestedSelectionRange: Range<Int>?
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -32,8 +33,11 @@ struct NativeChapterSelectionSheet: View {
                     tone: .primary,
                     highlightRanges: chapterHighlightRanges(),
                     isDark: palette.isDark,
+                    selectedRange: requestedSelectionRange,
+                    scrollTargetOffset: requestedSelectionRange == nil ? focusUTF16Offset : nil,
                     clearSelection: false,
                     onSelectionChange: { range in
+                        requestedSelectionRange = range
                         guard let range else {
                             draftSelection = nil
                             return
@@ -52,6 +56,9 @@ struct NativeChapterSelectionSheet: View {
         .background(palette.window)
         .onAppear {
             draftSelection = initialSelection
+            requestedSelectionRange = initialSelection.flatMap {
+                ReaderSelectionContext.utf16Range(of: $0, in: chapterText)
+            }
         }
         #if os(iOS)
         .presentationDetents([.large])
@@ -94,7 +101,11 @@ struct NativeChapterSelectionSheet: View {
                     .foregroundStyle(palette.ink)
                     .lineLimit(3)
             } else {
-                Text("先在正文里拖拽或长按选择需要的跨段文本。")
+                Text(
+                    initialSelection == nil
+                        ? "会自动定位到你刚才的阅读位置；再拖拽或长按即可跨段选择。"
+                        : "已带入你当前的选区，可继续扩展或改选。"
+                )
                     .font(.system(size: 12.5))
                     .foregroundStyle(palette.ink3)
             }

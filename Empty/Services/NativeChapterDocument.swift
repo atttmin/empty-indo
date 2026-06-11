@@ -169,6 +169,12 @@ nonisolated struct NativeTextBlockSpan: Equatable {
         guard upper > lower else { return nil }
         return (lower - chapterRange.lowerBound)..<(upper - chapterRange.lowerBound)
     }
+
+    func localProgress(for absoluteUTF16Offset: Int) -> CGFloat {
+        let length = max(chapterRange.upperBound - chapterRange.lowerBound, 1)
+        let local = max(0, min(absoluteUTF16Offset - chapterRange.lowerBound, length - 1))
+        return CGFloat(local) / CGFloat(length)
+    }
 }
 
 nonisolated enum ReaderSelectionContext {
@@ -194,8 +200,19 @@ nonisolated enum ReaderSelectionContext {
             suffix: utf16Slice(source, range: upper..<suffixEnd)
         )
     }
-}
 
+    static func utf16Range(
+        of selection: ReaderSelection,
+        in source: String
+    ) -> Range<Int>? {
+        PlainTextSearch.utf16Range(
+            of: selection.text,
+            prefix: selection.prefix,
+            suffix: selection.suffix,
+            in: source
+        )
+    }
+}
 nonisolated enum NativeChapterBlock: Equatable, Identifiable {
     case heading(id: String, level: Int, text: String)
     case paragraph(id: String, paragraphIndex: Int, text: String)

@@ -28,6 +28,11 @@ private nonisolated struct NativeHighlightSegment: Equatable {
     var endUTF16: Int
 }
 
+private nonisolated struct NativeTextSelectionRequest: Equatable {
+    var startUTF16: Int
+    var endUTF16: Int
+}
+
 private nonisolated struct NativeTextRenderModel: Equatable {
     var text: String
     var fontSize: Double
@@ -46,6 +51,8 @@ struct NativeSelectableTextBlockView: View {
     let tone: NativeTextTone
     let highlightRanges: [Range<Int>]
     let isDark: Bool
+    var selectedRange: Range<Int>? = nil
+    var scrollTargetOffset: Int? = nil
     var clearSelection: Bool = false
     var onSelectionChange: (Range<Int>?) -> Void = { _ in }
 
@@ -65,6 +72,10 @@ struct NativeSelectableTextBlockView: View {
                     )
                 }
             ),
+            selectedRange: selectedRange.map {
+                NativeTextSelectionRequest(startUTF16: $0.lowerBound, endUTF16: $0.upperBound)
+            },
+            scrollTargetOffset: scrollTargetOffset,
             clearSelection: clearSelection,
             onSelectionChange: onSelectionChange
         )
@@ -123,6 +134,8 @@ private func nativeFont(size: Double, weight: NativeTextWeight) -> UIFont {
 
 private struct NativeSelectableTextRepresentable: UIViewRepresentable {
     let model: NativeTextRenderModel
+    let selectedRange: NativeTextSelectionRequest?
+    let scrollTargetOffset: Int?
     let clearSelection: Bool
     let onSelectionChange: (Range<Int>?) -> Void
 
@@ -157,10 +170,25 @@ private struct NativeSelectableTextRepresentable: UIViewRepresentable {
             context.coordinator.programmaticChange = false
             context.coordinator.model = model
         }
+
         if clearSelection, textView.selectedRange.length > 0 {
             context.coordinator.programmaticChange = true
             textView.selectedRange = NSRange(location: NSNotFound, length: 0)
             context.coordinator.programmaticChange = false
+            context.coordinator.appliedSelection = nil
+        } else if let selectedRange,
+                  context.coordinator.appliedSelection != selectedRange {
+            let range = clampedNSRange(for: selectedRange, textLength: model.text.utf16.count)
+            context.coordinator.programmaticChange = true
+            textView.selectedRange = range
+            textView.scrollRangeToVisible(range)
+            context.coordinator.programmaticChange = false
+            context.coordinator.appliedSelection = selectedRange
+        } else if let scrollTargetOffset,
+                  context.coordinator.appliedScrollTarget != scrollTargetOffset {
+            let location = max(0, min(scrollTargetOffset, model.text.utf16.count))
+            textView.scrollRangeToVisible(NSRange(location: location, length: 0))
+            context.coordinator.appliedScrollTarget = scrollTargetOffset
         }
     }
 
@@ -180,6 +208,8 @@ private struct NativeSelectableTextRepresentable: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var model: NativeTextRenderModel?
         var programmaticChange = false
+        var appliedSelection: NativeTextSelectionRequest?
+        var appliedScrollTarget: Int?
         let onSelectionChange: (Range<Int>?) -> Void
 
         init(onSelectionChange: @escaping (Range<Int>?) -> Void) {
@@ -210,6 +240,8 @@ private func nativeFont(size: Double, weight: NativeTextWeight) -> NSFont {
 
 private struct NativeSelectableTextRepresentable: NSViewRepresentable {
     let model: NativeTextRenderModel
+    let selectedRange: NativeTextSelectionRequest?
+    let scrollTargetOffset: Int?
     let clearSelection: Bool
     let onSelectionChange: (Range<Int>?) -> Void
 
@@ -253,10 +285,25 @@ private struct NativeSelectableTextRepresentable: NSViewRepresentable {
             context.coordinator.programmaticChange = false
             context.coordinator.model = model
         }
+
         if clearSelection, textView.selectedRange().length > 0 {
             context.coordinator.programmaticChange = true
             textView.setSelectedRange(NSRange(location: NSNotFound, length: 0))
             context.coordinator.programmaticChange = false
+            context.coordinator.appliedSelection = nil
+        } else if let selectedRange,
+                  context.coordinator.appliedSelection != selectedRange {
+            let range = clampedNSRange(for: selectedRange, textLength: model.text.utf16.count)
+            context.coordinator.programmaticChange = true
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+            context.coordinator.programmaticChange = false
+            context.coordinator.appliedSelection = selectedRange
+        } else if let scrollTargetOffset,
+                  context.coordinator.appliedScrollTarget != scrollTargetOffset {
+            let location = max(0, min(scrollTargetOffset, model.text.utf16.count))
+            textView.scrollRangeToVisible(NSRange(location: location, length: 0))
+            context.coordinator.appliedScrollTarget = scrollTargetOffset
         }
     }
 
@@ -283,6 +330,8 @@ private struct NativeSelectableTextRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var model: NativeTextRenderModel?
         var programmaticChange = false
+        var appliedSelection: NativeTextSelectionRequest?
+        var appliedScrollTarget: Int?
         let onSelectionChange: (Range<Int>?) -> Void
 
         init(onSelectionChange: @escaping (Range<Int>?) -> Void) {
@@ -302,6 +351,15 @@ private struct NativeSelectableTextRepresentable: NSViewRepresentable {
     }
 }
 #endif
+
+private func clampedNSRange(
+    for request: NativeTextSelectionRequest,
+    textLength: Int
+) -> NSRange {
+    let lower = max(0, min(request.startUTF16, textLength))
+    let upper = max(lower, min(request.endUTF16, textLength))
+    return NSRange(location: lower, length: upper - lower)
+}
 
 private extension NativePlatformColor {
     convenience init(hex: UInt32, alpha: Double = 1) {

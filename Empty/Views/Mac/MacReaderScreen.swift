@@ -45,6 +45,7 @@ struct MacReaderScreen: View {
     @State private var showChapterList = false
     @State private var showSettings = false
     @State private var showRecap = false
+    @State private var showHighlights = false
     @State private var recapCache: RecapCache?
     @State private var fontSize: Double = 18
     @State private var lineSpacing: Double = 1.8
@@ -321,10 +322,17 @@ struct MacReaderScreen: View {
                 highlights: chapterHighlights,
                 fontSize: fontSize,
                 lineSpacing: lineSpacing,
+                focusUTF16Offset: currentUTF16Offset,
                 initialSelection: pendingSelection
             ) { selection in
                 applySelection(selection)
             }
+        }
+        .sheet(isPresented: $showHighlights) {
+            HighlightsListView(book: book) { position in
+                jumpToHighlight(position)
+            }
+            .frame(minWidth: 420, minHeight: 460)
         }
         .onChange(of: currentChapterIndex) { _, _ in
             pendingSelection = nil
@@ -342,6 +350,9 @@ struct MacReaderScreen: View {
                 && !AIProviderSettings.load().resolveUsableService()
                     .service.availability.isAvailable
             startPretranslation()
+        }
+        .onChange(of: showHighlights) { _, isShowing in
+            if !isShowing { refreshChapterHighlights() }
         }
         .onDisappear {
             pretransTask?.cancel()
@@ -487,6 +498,12 @@ struct MacReaderScreen: View {
                 )
                 .frame(minWidth: 440, minHeight: 480)
             }
+            .sheet(isPresented: $showHighlights) {
+                HighlightsListView(book: book) { position in
+                    jumpToHighlight(position)
+                }
+                .frame(minWidth: 420, minHeight: 460)
+            }
             .onChange(of: currentChapterIndex) { _, newIndex in
                 syncPageProgress(at: newIndex)
                 resetChapterArtifacts()
@@ -497,6 +514,9 @@ struct MacReaderScreen: View {
             }
             .onChange(of: readingMode) { _, _ in
                 Task { await loadModeGuide() }
+            }
+            .onChange(of: showHighlights) { _, isShowing in
+                if !isShowing { refreshChapterHighlights() }
             }
         }
     }
@@ -516,6 +536,18 @@ struct MacReaderScreen: View {
             currentUTF16Offset = 0
         }
         refreshChapterHighlights()
+    }
+
+    private func jumpToHighlight(_ position: ReadingPosition) {
+        if pdfDocumentURL != nil {
+            currentChapterIndex = position.chapterIndex
+            syncPageProgress(at: position.chapterIndex)
+        } else {
+            currentChapterIndex = position.chapterIndex
+            currentUTF16Offset = position.utf16Offset
+            chapterLanding = .start
+            refreshChapterHighlights()
+        }
     }
 
     private var pdfTopBar: some View {
@@ -576,6 +608,7 @@ struct MacReaderScreen: View {
             .buttonStyle(.plain)
 
             pillButton("目录") { showChapterList = true }
+            pillButton("高亮") { showHighlights = true }
 
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -870,6 +903,8 @@ struct MacReaderScreen: View {
                 .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
             }
             .buttonStyle(.plain)
+
+            pillButton("高亮") { showHighlights = true }
 
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {

@@ -223,6 +223,34 @@ struct NativeChapterOffsetsTests {
         #expect(span.localRange(intersecting: 0..<10) == nil)
         #expect(span.localRange(intersecting: 35..<50) == 15..<22)
     }
+
+    @Test func localProgressTracksIntraBlockResumeOffset() {
+        let span = NativeTextBlockSpan(
+            blockID: "p-2",
+            chapterRange: 100..<200,
+            paragraphInfo: nil
+        )
+
+        #expect(span.localProgress(for: 100) == 0)
+        #expect(span.localProgress(for: 150) == 0.5)
+        #expect(span.localProgress(for: 999) > 0.95)
+    }
+
+    @Test func selectionContextCanRelocateExistingSelection() {
+        let chapterText = "Chapter\n第一段 甲乙丙。\n第二段 甲乙丙。\n尾段 收束。"
+        let selected = "第二段 甲乙丙。\n尾段"
+
+        guard let range = PlainTextSearch.utf16Range(of: selected, in: chapterText),
+              let selection = ReaderSelectionContext.selection(
+                in: chapterText,
+                utf16Range: range
+              ) else {
+            Issue.record("Missing selection seed")
+            return
+        }
+
+        #expect(ReaderSelectionContext.utf16Range(of: selection, in: chapterText) == range)
+    }
 }
 
 // MARK: - Minimal EPUB fixture

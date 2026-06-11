@@ -38,6 +38,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-paragraph excerpts can be selected and sent back through the same
   explain / translate / highlight flow.
 
+- Highlight rows only jumped to chapter starts and existing notes were
+  read-only: the highlight sheet now jumps back to the stored UTF-16 anchor,
+  exposes inline “写批注 / 编辑批注”, and Mac reader top bars also surface the
+  shared highlight sheet so note editing and jump-back work there too.
+
+- The native EPUB path still carried ~1300 lines of unreachable WebView/JS
+  bridge code and resumed long chapters only at block tops while loading
+  chapter images synchronously on the main thread: the dead `WKWebView`
+  reader path is gone, resume now lands inside the matched text block using
+  its stored UTF-16 progress, and native image decode runs in a utility task
+  before hopping back to the main actor for display.
+
+- The chapter-wide 跨段 picker always reopened at the top and dropped the
+  user’s prior selection state: it now restores the current selection when
+  present, otherwise auto-focuses near the current UTF-16 reading offset, and
+  keeps the whole-chapter native text view aligned with the reader context.
+
 ### Added
 
 - Two cloud standards behind the same `AIService` protocol: the existing
