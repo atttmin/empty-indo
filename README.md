@@ -79,7 +79,7 @@ open Empty.xcodeproj
 
 ### 3. 导入书籍
 
-点击 **导入**，选择 `.epub` 文件（PDF 暂不支持）。
+点击 **导入**，选择 `.epub` 或 `.pdf` 文件。
 
 ### 4. 配置 AI（可选）
 
@@ -100,7 +100,7 @@ xcodebuild -scheme Empty -destination 'platform=macOS' \
   -only-testing:EmptyTests test
 ```
 
-当前 **79/79** 单元测试全部通过。
+当前 **82/82** 单元测试全部通过。
 
 ---
 
@@ -179,7 +179,7 @@ git push -u origin main
 - [x] 闪卡 UI（高亮生成 + 间隔复习）
 - [x] iOS 词汇 / 笔记 / 学习 Tab
 - [x] CloudKit 同步（`Empty.entitlements` + SwiftData `.automatic`）
-- [ ] PDF 阅读支持（导入阶段已拒绝 PDF）
+- [x] PDF 阅读支持（PDFKit 分页阅读 + 按页索引）
 - [x] Mac 笔记屏 AI 主题建议
 
 完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。

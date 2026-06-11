@@ -120,7 +120,7 @@ struct MacLibraryScreen: View {
             Button {
                 isImporterPresented = true
             } label: {
-                Text("+ 导入 EPUB")
+                Text("+ 导入书籍")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(palette.window)
                     .padding(.horizontal, 16)
@@ -155,7 +155,7 @@ struct MacLibraryScreen: View {
                 .overlay {
                     VStack(spacing: 4) {
                         Text("+").font(.system(size: 26, weight: .light))
-                        Text("导入 EPUB").font(.system(size: 11.5))
+                        Text("导入 EPUB / PDF").font(.system(size: 11.5))
                     }
                     .foregroundStyle(palette.ink3)
                 }

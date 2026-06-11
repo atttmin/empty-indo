@@ -13,7 +13,7 @@ nonisolated enum LibraryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFileType(let ext):
-            "“.\(ext)” files aren't supported. Import an EPUB."
+            "“.\(ext)” files aren't supported. Import an EPUB or PDF."
         }
     }
 }
@@ -26,7 +26,7 @@ struct Library {
     let fileStore: BookFileStore
 
     /// Content types the importer accepts; mirrors `BookFormat`.
-    static let importableContentTypes: [UTType] = [.epub]
+    static let importableContentTypes: [UTType] = [.epub, .pdf]
 
     init(modelContext: ModelContext, fileStore: BookFileStore) {
         self.modelContext = modelContext
@@ -45,9 +45,6 @@ struct Library {
         guard let format = BookFormat(fileExtension: url.pathExtension) else {
             throw LibraryError.unsupportedFileType(url.pathExtension)
         }
-        guard format == .epub else {
-            throw LibraryError.unsupportedFileType(url.pathExtension)
-        }
         let book = Book(
             title: url.deletingPathExtension().lastPathComponent,
             format: format
@@ -55,8 +52,11 @@ struct Library {
         book.fileRelativePath = try fileStore.importFile(at: url, bookID: book.id)
         modelContext.insert(book)
 
-        if format == .epub {
+        switch format {
+        case .epub:
             populateFromEPUB(book)
+        case .pdf:
+            populateFromPDF(book)
         }
 
         try modelContext.save()
@@ -94,6 +94,82 @@ struct Library {
             )
             modelContext.insert(record)
         }
+    }
+
+    /// Best-effort enrichment for PDFs: metadata, cover, and one `Chapter`
+    /// row per page (the AI layer's substrate).
+    private func populateFromPDF(_ book: Book) {
+        guard let relativePath = book.fileRelativePath else { return }
+        let parsed: ParsedPDF
+        do {
+            parsed = try PDFParser().parseBook(
+                at: fileStore.url(forRelativePath: relativePath)
+            )
+        } catch {
+            return
+        }
+
+        if !parsed.metadata.title.isEmpty { book.title = parsed.metadata.title }
+        if !parsed.metadata.author.isEmpty { book.author = parsed.metadata.author }
+        book.coverThumbnailData = parsed.coverImageData
+
+        for page in parsed.pages {
+            let record = Chapter(
+                bookID: book.id,
+                index: page.index,
+                title: page.title,
+                sourceReference: String(page.index),
+                text: page.text
+            )
+            modelContext.insert(record)
+        }
+    }
+
+    /// Ensures per-page `Chapter` rows exist (import backfill or re-parse).
+    /// Returns sorted page titles for the reader UI.
+    @discardableResult
+    static func ensurePDFChapters(
+        for book: Book,
+        at fileURL: URL,
+        in modelContext: ModelContext
+    ) throws -> [String] {
+        let bookID = book.id
+        let existing = try modelContext.fetch(
+            FetchDescriptor<Chapter>(
+                predicate: #Predicate { $0.bookID == bookID },
+                sortBy: [SortDescriptor(\.index)]
+            )
+        )
+        if !existing.isEmpty {
+            return existing.map { $0.title ?? "Page \($0.index + 1)" }
+        }
+
+        let parsed = try PDFParser().parseBook(at: fileURL)
+        guard !parsed.pages.isEmpty else {
+            throw PDFParser.ParseError.noPages
+        }
+
+        if !parsed.metadata.title.isEmpty, book.title.isEmpty
+            || book.title == fileURL.deletingPathExtension().lastPathComponent {
+            book.title = parsed.metadata.title
+        }
+        if !parsed.metadata.author.isEmpty { book.author = parsed.metadata.author }
+        if book.coverThumbnailData == nil {
+            book.coverThumbnailData = parsed.coverImageData
+        }
+
+        for page in parsed.pages {
+            let record = Chapter(
+                bookID: book.id,
+                index: page.index,
+                title: page.title,
+                sourceReference: String(page.index),
+                text: page.text
+            )
+            modelContext.insert(record)
+        }
+        try modelContext.save()
+        return parsed.pages.map(\.title)
     }
 
     /// Deletes a book everywhere it exists: the synced record (highlights

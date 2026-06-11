@@ -26,6 +26,9 @@ struct MacReaderScreen: View {
     @Query private var vocabEntries: [VocabEntry]
 
     @State private var epubBook: EPUBBook?
+    @State private var pdfDocumentURL: URL?
+    @State private var sectionCount: Int = 0
+    @State private var sectionTitles: [String] = []
     @State private var currentChapterIndex: Int
     @State private var currentUTF16Offset: Int
     @State private var chapterLanding: ChapterLanding = .start
@@ -96,6 +99,8 @@ struct MacReaderScreen: View {
                 errorView(loadError)
             } else if let epubBook {
                 readerContent(epubBook)
+            } else if pdfDocumentURL != nil {
+                pdfReaderContent
             }
         }
         .background(palette.window)
@@ -248,7 +253,8 @@ struct MacReaderScreen: View {
         }
         .sheet(isPresented: $showChapterList) {
             ChapterListView(
-                chapters: epub.chapters,
+                titles: sectionTitles,
+                listTitle: "Chapters",
                 currentIndex: currentChapterIndex
             ) { index in
                 currentChapterIndex = index
@@ -287,6 +293,282 @@ struct MacReaderScreen: View {
         .onChange(of: readingMode) { _, _ in
             Task { await loadModeGuide() }
         }
+    }
+
+    @ViewBuilder
+    private var pdfReaderContent: some View {
+        if let documentURL = pdfDocumentURL {
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    pdfTopBar
+                    Rectangle().fill(palette.line).frame(height: 1)
+
+                    if summaryOpen {
+                        if isSummaryLoading {
+                            ProgressView("生成页面概览…")
+                                .padding()
+                        } else if !chapterSummary.isEmpty {
+                            MacChapterSummaryCard(
+                                title: currentSectionTitle,
+                                summary: chapterSummary,
+                                onCollapse: { summaryOpen = false }
+                            )
+                        }
+                    } else {
+                        Button("朱 · 展开页面概览") {
+                            summaryOpen = true
+                            Task { await loadChapterSummary() }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundStyle(palette.ink3)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .overlay(
+                            Capsule().strokeBorder(palette.line2, style: StrokeStyle(dash: [4, 3]))
+                        )
+                        .padding(.top, 12)
+                    }
+
+                    if readingMode != .original {
+                        modeGuideBanner
+                    }
+
+                    HStack(spacing: 0) {
+                        VStack(spacing: 0) {
+                            PDFReaderView(
+                                documentURL: documentURL,
+                                pageIndex: $currentChapterIndex,
+                                onPageChange: syncPageProgress
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                            Rectangle().fill(palette.line).frame(height: 1)
+                            pdfBottomBar
+                        }
+
+                        if isCompanionOpen {
+                            Rectangle().fill(palette.line).frame(width: 1)
+                            MacCompanionPanel(
+                                model: companion,
+                                book: book,
+                                bookTitle: book.title,
+                                chapterTitle: currentSectionTitle,
+                                highlightCount: book.highlights?.count ?? 0,
+                                position: currentReadingPosition,
+                                onClose: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        isCompanionOpen = false
+                                    }
+                                }
+                            )
+                            .frame(width: 360)
+                            .transition(.move(edge: .trailing))
+                        }
+                    }
+                }
+
+                if aloud.isSpeaking || !aloud.currentSnippet.isEmpty {
+                    MacReadingAloudBar(
+                        snippet: aloud.currentSnippet,
+                        onToggle: { aloud.togglePause() },
+                        isPaused: !aloud.isSpeaking
+                    )
+                    .padding(.bottom, 22)
+                }
+            }
+            .sheet(isPresented: $showChapterList) {
+                ChapterListView(
+                    titles: sectionTitles,
+                    listTitle: "Pages",
+                    currentIndex: currentChapterIndex
+                ) { index in
+                    currentChapterIndex = index
+                    syncPageProgress(at: index)
+                    showChapterList = false
+                    resetChapterArtifacts()
+                }
+                .frame(minWidth: 380, minHeight: 460)
+            }
+            .sheet(isPresented: $showSettings) {
+                ReadingSettingsView(
+                    fontSize: $fontSize,
+                    lineSpacing: $lineSpacing,
+                    isDarkMode: .constant(palette.isDark)
+                )
+                .frame(minWidth: 320, minHeight: 280)
+            }
+            .sheet(isPresented: $showRecap) {
+                RecapView(
+                    book: book,
+                    position: currentReadingPosition,
+                    cache: $recapCache
+                )
+                .frame(minWidth: 440, minHeight: 480)
+            }
+            .onChange(of: currentChapterIndex) { _, newIndex in
+                syncPageProgress(at: newIndex)
+                resetChapterArtifacts()
+                Task {
+                    await loadChapterSummary()
+                    await loadModeGuide()
+                }
+            }
+            .onChange(of: readingMode) { _, _ in
+                Task { await loadModeGuide() }
+            }
+        }
+    }
+
+    private var currentSectionTitle: String {
+        guard currentChapterIndex >= 0, currentChapterIndex < sectionTitles.count else {
+            return "Page \(currentChapterIndex + 1)"
+        }
+        return sectionTitles[currentChapterIndex]
+    }
+
+    private func syncPageProgress(at index: Int) {
+        currentChapterIndex = index
+        if let plainText = currentChapterPlainText() {
+            currentUTF16Offset = plainText.utf16.count
+        } else {
+            currentUTF16Offset = 0
+        }
+        refreshChapterHighlights()
+    }
+
+    private var pdfTopBar: some View {
+        HStack(spacing: 14) {
+            Button {
+                saveProgress()
+                onBack()
+            } label: {
+                Text("‹ 书库")
+                    .font(.system(size: 13))
+                    .foregroundStyle(palette.ink3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(book.title)
+                    .font(.system(size: 15, weight: .bold, design: .serif))
+                    .foregroundStyle(palette.ink)
+                    .lineLimit(1)
+                Text(currentSectionTitle)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(palette.ink3)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            MacSegmentedPills(
+                options: [
+                    (.original, "原文"),
+                    (.bilingual, "双语对照"),
+                    (.companion, "导读"),
+                ],
+                selection: $readingMode
+            )
+
+            Button(action: onOpenVocab) {
+                Text("生词本 \(vocabEntries.count)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(palette.ink3)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+
+            Button { toggleReadingAloud() } label: {
+                Text(aloud.isSpeaking ? "❚❚ 朗读" : "▶ 朗读")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(aloud.isSpeaking ? palette.accent : palette.ink2)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+
+            pillButton("目录") { showChapterList = true }
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isCompanionOpen.toggle()
+                }
+            } label: {
+                Text("朱 · AI 伴读")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundStyle(isCompanionOpen ? palette.onAccent : palette.accent)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 7)
+                    .background(
+                        isCompanionOpen ? palette.accent : palette.accentSoft,
+                        in: Capsule()
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 58)
+    }
+
+    private var pdfBottomBar: some View {
+        HStack(spacing: 18) {
+            Button {
+                guard currentChapterIndex > 0 else { return }
+                currentChapterIndex -= 1
+            } label: {
+                Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(currentChapterIndex > 0 ? palette.ink2 : palette.ink3.opacity(0.4))
+            .disabled(currentChapterIndex <= 0)
+
+            Text("第 \(currentChapterIndex + 1) / \(sectionCount) 页")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(palette.ink3)
+
+            Button {
+                guard currentChapterIndex < sectionCount - 1 else { return }
+                currentChapterIndex += 1
+            } label: {
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(
+                currentChapterIndex < sectionCount - 1
+                    ? palette.ink2 : palette.ink3.opacity(0.4)
+            )
+            .disabled(currentChapterIndex >= sectionCount - 1)
+
+            Spacer()
+
+            let chapterCount = Double(max(sectionCount, 1))
+            let chapterLength = Double(
+                currentChapterPlainText()?.utf16.count ?? 1
+            )
+            let intraChapter = chapterLength > 0
+                ? Double(currentUTF16Offset) / chapterLength
+                : 0
+            let progress = min(
+                1,
+                (Double(currentChapterIndex) + intraChapter) / chapterCount
+            )
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(palette.accent)
+                .frame(maxWidth: 220)
+            Text("\(Int(progress * 100))%")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(palette.ink3)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 44)
     }
 
     private var modeGuideBanner: some View {
@@ -565,7 +847,8 @@ struct MacReaderScreen: View {
 
     private var chapterSourceLabel: String {
         let title = epubBook?.metadata.title ?? book.title
-        return "\(title) · 第 \(currentChapterIndex + 1) 章"
+        let unit = pdfDocumentURL != nil ? "页" : "章"
+        return "\(title) · 第 \(currentChapterIndex + 1) \(unit)"
     }
 
     // MARK: AI chapter artifacts
@@ -708,25 +991,39 @@ struct MacReaderScreen: View {
     private func loadBook() {
         Task {
             do {
-                guard book.format == .epub else {
-                    throw EPUBParser.ParseError.parsingFailed(
-                        "PDF reading isn't wired up yet — EPUB only for now."
-                    )
-                }
                 guard let relativePath = book.fileRelativePath else {
                     throw EPUBParser.ParseError.fileNotFound
                 }
                 let fileStore = try BookFileStore.makeDefault()
-                let parsed = try EPUBParser().parseBook(
-                    at: fileStore.url(forRelativePath: relativePath),
-                    unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
-                )
-                guard !parsed.chapters.isEmpty else {
-                    throw EPUBParser.ParseError.parsingFailed("No readable chapters found.")
+                let fileURL = fileStore.url(forRelativePath: relativePath)
+
+                switch book.format {
+                case .epub:
+                    let parsed = try EPUBParser().parseBook(
+                        at: fileURL,
+                        unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
+                    )
+                    guard !parsed.chapters.isEmpty else {
+                        throw EPUBParser.ParseError.parsingFailed("No readable chapters found.")
+                    }
+                    epubBook = parsed
+                    sectionCount = parsed.chapters.count
+                    sectionTitles = parsed.chapters.map(\.title)
+                case .pdf:
+                    sectionTitles = try Library.ensurePDFChapters(
+                        for: book,
+                        at: fileURL,
+                        in: modelContext
+                    )
+                    sectionCount = sectionTitles.count
+                    pdfDocumentURL = fileURL
                 }
-                epubBook = parsed
-                if currentChapterIndex >= parsed.chapters.count {
+
+                if currentChapterIndex >= sectionCount {
                     currentChapterIndex = 0
+                }
+                if book.format == .pdf {
+                    syncPageProgress(at: currentChapterIndex)
                 }
                 isLoading = false
                 startSession()
@@ -775,10 +1072,10 @@ struct MacReaderScreen: View {
     }
 
     private func saveProgress() {
-        guard let epubBook else { return }
+        guard epubBook != nil || pdfDocumentURL != nil else { return }
         let position = currentReadingPosition
         book.position = position
-        let chapterCount = Double(max(epubBook.chapters.count, 1))
+        let chapterCount = Double(max(sectionCount, 1))
         let chapterLength = Double(
             currentChapterPlainText()?.utf16.count ?? 1
         )

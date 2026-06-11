@@ -4,9 +4,16 @@
 //
 
 import Foundation
+import PDFKit
 import SwiftData
 import Testing
 @testable import Empty
+
+#if canImport(AppKit)
+import AppKit
+import CoreGraphics
+import CoreText
+#endif
 
 @MainActor
 struct LibraryTests {
@@ -39,15 +46,15 @@ struct LibraryTests {
         #expect(try fixture.context.fetchCount(FetchDescriptor<Book>()) == 0)
     }
 
-    @Test func importRejectsPDFUntilReaderExists() throws {
+    @Test func importAcceptsPDF() throws {
         let fixture = try Fixture()
         defer { fixture.tearDown() }
-        let source = try fixture.writeSourceFile(named: "paper.pdf")
+        let source = try fixture.writeMinimalPDF(named: "paper.pdf")
 
-        #expect(throws: LibraryError.self) {
-            try fixture.library.importBook(from: source)
-        }
-        #expect(try fixture.context.fetchCount(FetchDescriptor<Book>()) == 0)
+        let book = try fixture.library.importBook(from: source)
+
+        #expect(book.format == .pdf)
+        #expect(try fixture.context.fetchCount(FetchDescriptor<Book>()) == 1)
     }
 
     @Test func deleteRemovesRecordsDerivedDataAndFiles() throws {
@@ -120,6 +127,40 @@ private struct Fixture {
         let url = tempDirectory.appending(path: name)
         try Data("placeholder book bytes".utf8).write(to: url)
         return url
+    }
+
+    func writeMinimalPDF(named name: String) throws -> URL {
+        #if canImport(AppKit)
+        let url = tempDirectory.appending(path: name)
+        var mediaBox = CGRect(x: 0, y: 0, width: 612, height: 792)
+        guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+            struct PDFWriteError: Error {}
+            throw PDFWriteError()
+        }
+        context.beginPDFPage(nil)
+        let attributed = NSAttributedString(
+            string: "PDF import test",
+            attributes: [.font: NSFont.systemFont(ofSize: 14)]
+        )
+        let line = CTLineCreateWithAttributedString(attributed)
+        context.textMatrix = .identity
+        context.translateBy(x: 72, y: 720)
+        CTLineDraw(line, context)
+        context.endPDFPage()
+        context.closePDF()
+        return url
+        #else
+        let url = tempDirectory.appending(path: name)
+        let document = PDFDocument()
+        let page = PDFPage()
+        page.setBounds(CGRect(x: 0, y: 0, width: 612, height: 792), for: .mediaBox)
+        document.insert(page, at: 0)
+        guard document.write(to: url) else {
+            struct PDFWriteError: Error {}
+            throw PDFWriteError()
+        }
+        return url
+        #endif
     }
 
     func tearDown() {

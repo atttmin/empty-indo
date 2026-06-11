@@ -42,6 +42,9 @@ struct ReadingView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var epubBook: EPUBBook?
+    @State private var pdfDocumentURL: URL?
+    @State private var sectionCount: Int = 0
+    @State private var sectionTitles: [String] = []
     @State private var currentChapterIndex: Int
     @State private var currentUTF16Offset: Int
     @State private var chapterLanding: ChapterLanding = .start
@@ -99,6 +102,8 @@ struct ReadingView: View {
                 .padding()
             } else if let epubBook {
                 readerContent(epubBook)
+            } else if pdfDocumentURL != nil {
+                pdfReaderContent
             }
         }
         .preferredColorScheme(isDarkMode ? .dark : nil)
@@ -158,7 +163,8 @@ struct ReadingView: View {
         .animation(.easeInOut(duration: 0.25), value: showControls)
         .sheet(isPresented: $showChapterList) {
             ChapterListView(
-                chapters: book.chapters,
+                titles: sectionTitles,
+                listTitle: "Chapters",
                 currentIndex: currentChapterIndex
             ) { index in
                 currentChapterIndex = index
@@ -229,6 +235,191 @@ struct ReadingView: View {
         } message: {
             Text(saveErrorMessage ?? "")
         }
+    }
+
+    @ViewBuilder
+    private var pdfReaderContent: some View {
+        if let documentURL = pdfDocumentURL {
+            VStack(spacing: 0) {
+                if showControls {
+                    pdfTopBar
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                PDFReaderView(
+                    documentURL: documentURL,
+                    pageIndex: $currentChapterIndex,
+                    onPageChange: syncPageProgress
+                )
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() }
+                }
+
+                if showControls {
+                    pdfBottomBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.25), value: showControls)
+            .sheet(isPresented: $showChapterList) {
+                ChapterListView(
+                    titles: sectionTitles,
+                    listTitle: "Pages",
+                    currentIndex: currentChapterIndex
+                ) { index in
+                    currentChapterIndex = index
+                    syncPageProgress(at: index)
+                    showChapterList = false
+                }
+                #if os(macOS)
+                .frame(minWidth: 380, minHeight: 460)
+                #endif
+            }
+            .sheet(isPresented: $showRecap) {
+                RecapView(
+                    book: self.book,
+                    position: currentReadingPosition,
+                    cache: $recapCache
+                )
+                #if os(macOS)
+                .frame(minWidth: 440, minHeight: 480)
+                #endif
+            }
+            .sheet(isPresented: $showAsk) {
+                AskBookView(
+                    book: self.book,
+                    position: currentReadingPosition
+                )
+                #if os(macOS)
+                .frame(minWidth: 440, minHeight: 480)
+                #endif
+            }
+            .sheet(isPresented: $showHighlights) {
+                HighlightsListView(book: self.book) { chapterIndex in
+                    currentChapterIndex = chapterIndex
+                    syncPageProgress(at: chapterIndex)
+                }
+                #if os(macOS)
+                .frame(minWidth: 420, minHeight: 460)
+                #endif
+            }
+            .onChange(of: currentChapterIndex) { _, newIndex in
+                syncPageProgress(at: newIndex)
+            }
+            .onChange(of: showHighlights) { _, isShowing in
+                if !isShowing { refreshChapterHighlights() }
+            }
+        }
+    }
+
+    private var pdfTopBar: some View {
+        HStack {
+            Button {
+                saveProgress()
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            Spacer()
+
+            VStack(spacing: 1) {
+                Text(book.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(currentSectionTitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button { showHighlights = true } label: {
+                Image(systemName: "bookmark")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+            }
+
+            Button { showAsk = true } label: {
+                Image(systemName: "questionmark.bubble")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+            }
+
+            Button { showRecap = true } label: {
+                Image(systemName: "sparkles")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+    }
+
+    private var pdfBottomBar: some View {
+        HStack(spacing: 24) {
+            Button { showChapterList = true } label: {
+                Image(systemName: "list.bullet")
+                    .font(.body.weight(.medium))
+            }
+
+            Spacer()
+
+            Button {
+                if currentChapterIndex > 0 {
+                    currentChapterIndex -= 1
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.body.weight(.semibold))
+            }
+            .disabled(currentChapterIndex <= 0)
+
+            Text("\(currentChapterIndex + 1) / \(sectionCount)")
+                .font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button {
+                if currentChapterIndex < sectionCount - 1 {
+                    currentChapterIndex += 1
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.body.weight(.semibold))
+            }
+            .disabled(currentChapterIndex >= sectionCount - 1)
+
+            Spacer()
+
+            let progress = Double(currentChapterIndex + 1) / Double(max(sectionCount, 1))
+            Text("\(Int(progress * 100))%")
+                .font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+    }
+
+    private var currentSectionTitle: String {
+        guard currentChapterIndex >= 0, currentChapterIndex < sectionTitles.count else {
+            return "Page \(currentChapterIndex + 1)"
+        }
+        return sectionTitles[currentChapterIndex]
+    }
+
+    private func syncPageProgress(at index: Int) {
+        currentChapterIndex = index
+        if let plainText = currentChapterPlainText() {
+            currentUTF16Offset = plainText.utf16.count
+        } else {
+            currentUTF16Offset = 0
+        }
+        refreshChapterHighlights()
     }
 
     private func topBar(_ book: EPUBBook) -> some View {
@@ -389,25 +580,39 @@ struct ReadingView: View {
     private func loadBook() {
         Task {
             do {
-                guard book.format == .epub else {
-                    throw EPUBParser.ParseError.parsingFailed(
-                        "PDF reading isn't wired up yet — EPUB only for now."
-                    )
-                }
                 guard let relativePath = book.fileRelativePath else {
                     throw EPUBParser.ParseError.fileNotFound
                 }
                 let fileStore = try BookFileStore.makeDefault()
-                let parsed = try EPUBParser().parseBook(
-                    at: fileStore.url(forRelativePath: relativePath),
-                    unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
-                )
-                guard !parsed.chapters.isEmpty else {
-                    throw EPUBParser.ParseError.parsingFailed("No readable chapters found.")
+                let fileURL = fileStore.url(forRelativePath: relativePath)
+
+                switch book.format {
+                case .epub:
+                    let parsed = try EPUBParser().parseBook(
+                        at: fileURL,
+                        unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
+                    )
+                    guard !parsed.chapters.isEmpty else {
+                        throw EPUBParser.ParseError.parsingFailed("No readable chapters found.")
+                    }
+                    epubBook = parsed
+                    sectionCount = parsed.chapters.count
+                    sectionTitles = parsed.chapters.map(\.title)
+                case .pdf:
+                    sectionTitles = try Library.ensurePDFChapters(
+                        for: book,
+                        at: fileURL,
+                        in: modelContext
+                    )
+                    sectionCount = sectionTitles.count
+                    pdfDocumentURL = fileURL
                 }
-                epubBook = parsed
-                if currentChapterIndex >= parsed.chapters.count {
+
+                if currentChapterIndex >= sectionCount {
                     currentChapterIndex = 0
+                }
+                if book.format == .pdf {
+                    syncPageProgress(at: currentChapterIndex)
                 }
                 isLoading = false
                 startSession()
@@ -428,10 +633,10 @@ struct ReadingView: View {
     }
 
     private func saveProgress() {
-        guard let epubBook else { return }
+        guard epubBook != nil || pdfDocumentURL != nil else { return }
         let position = currentReadingPosition
         book.position = position
-        let chapterCount = Double(max(epubBook.chapters.count, 1))
+        let chapterCount = Double(max(sectionCount, 1))
         let chapterLength = Double(
             currentChapterPlainText()?.utf16.count ?? 1
         )
@@ -1084,7 +1289,8 @@ extension ChapterWebView {
 // MARK: - Chapter List
 
 struct ChapterListView: View {
-    let chapters: [EPUBChapter]
+    let titles: [String]
+    var listTitle: String = "Chapters"
     let currentIndex: Int
     let onSelect: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -1092,12 +1298,12 @@ struct ChapterListView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
                     Button {
                         onSelect(index)
                     } label: {
                         HStack {
-                            Text(chapter.title)
+                            Text(title)
                                 .font(.subheadline)
                                 .foregroundStyle(index == currentIndex ? Color.accentColor : Color.primary)
                             Spacer()
@@ -1110,7 +1316,7 @@ struct ChapterListView: View {
                     }
                 }
             }
-            .navigationTitle("Chapters")
+            .navigationTitle(listTitle)
             #if !os(macOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- PDF reading: import `.pdf` files, native PDFKit viewer with per-page
+  navigation, progress tracking, and AI indexing via per-page `Chapter` rows
 - Intra-chapter reading position: the paginated reader now reports the
   furthest visible character (`utf16Offset`) on every page turn, so
   spoiler-safe retrieval includes already-read text from the current chapter
@@ -44,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Known limitations
 
 - Reading position tracked at chapter level only (`utf16Offset` not yet reported from reader; fixed in Unreleased)
-- PDF import supported; PDF reading not implemented
+- PDF text selection and in-document highlights not yet supported
 - CloudKit sync prepared but disabled (`syncedDatabase = .none`)
 - Flashcard generation implemented in services; no UI yet
 - iOS lacks vocab/notes screens (Mac-only)
