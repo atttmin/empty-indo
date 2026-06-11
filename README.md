@@ -168,7 +168,7 @@ git push -u origin main
 
 - `.gitignore` 已排除 `xcuserdata/`、`DerivedData/` 等本地文件
 - 不要在仓库中提交 API Key（密钥通过 Keychain 存储）
-- 若启用 CloudKit，需在 Xcode 中添加 iCloud capability 并配置 entitlements
+- 项目已包含 `Empty.entitlements`；在 Xcode 中确认 Signing & Capabilities 已启用 iCloud / CloudKit
 
 ---
 
@@ -176,10 +176,11 @@ git push -u origin main
 
 - [x] 章内阅读位置（`utf16Offset`）上报，实现精细防剧透
 - [x] 语义检索中文支持（语言感知 embedding）
-- [ ] 闪卡 UI（`AIService.flashcards` 已实现，缺界面）
-- [ ] iOS 词汇 / 笔记功能对齐
-- [ ] CloudKit 同步启用
-- [ ] PDF 阅读支持
+- [x] 闪卡 UI（高亮生成 + 间隔复习）
+- [x] iOS 词汇 / 笔记 / 学习 Tab
+- [x] CloudKit 同步（`Empty.entitlements` + SwiftData `.automatic`）
+- [ ] PDF 阅读支持（导入阶段已拒绝 PDF）
+- [x] Mac 笔记屏 AI 主题建议
 
 完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
