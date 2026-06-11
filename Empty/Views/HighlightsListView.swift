@@ -24,6 +24,7 @@ struct HighlightsListView: View {
     @State private var editingHighlight: Highlight?
     @State private var noteDraft = ""
     @State private var isSavingNote = false
+    @State private var showExport = false
 
     init(book: Book, onJump: @escaping (ReadingPosition) -> Void) {
         self.book = book
@@ -129,6 +130,20 @@ struct HighlightsListView: View {
                     .foregroundStyle(palette.ink3)
             }
             Spacer()
+            Button {
+                showExport = true
+            } label: {
+                Text("导出")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(palette.ink2)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showExport) {
+                BookExportView(book: book)
+            }
             Button {
                 showFlashcards = true
             } label: {
