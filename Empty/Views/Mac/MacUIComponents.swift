@@ -276,6 +276,10 @@ struct MacReadingAloudBar: View {
     let snippet: String
     var onToggle: () -> Void
     var isPaused: Bool
+    var rate: Double = 1.0
+    var onCycleRate: () -> Void = {}
+    var autoNext: Bool = false
+    var onToggleAutoNext: () -> Void = {}
 
     @Environment(\.emptyPalette) private var palette
 
@@ -302,9 +306,21 @@ struct MacReadingAloudBar: View {
             Text("正在朗读 · \"\(snippet)…\"")
                 .font(.system(size: 12.5))
                 .lineLimit(1)
-            Text("1.0×")
-                .font(.system(size: 11.5))
-                .opacity(0.6)
+            Button(action: onCycleRate) {
+                Text(String(format: "%.2g×", rate))
+                    .font(.system(size: 11.5, weight: .bold))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("语速（点击循环 0.75–1.5×）")
+            Button(action: onToggleAutoNext) {
+                Text("连读")
+                    .font(.system(size: 11))
+                    .opacity(autoNext ? 1 : 0.45)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("读完本章自动续读下一章")
         }
         .foregroundStyle(palette.window)
         .padding(.horizontal, 18)

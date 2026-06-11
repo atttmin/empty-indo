@@ -155,6 +155,7 @@ struct ReadingView: View {
     @State private var thoughtLinkSaved = false
     @State private var chapterPageInfo: (page: Int, count: Int)?
     @State private var activityMeter = ReadingActivityMeter()
+    @AppStorage("reader.aloud.autonext") private var aloudAutoNext = false
     @StateObject private var aloud = ReadingAloud()
 
     init(
@@ -249,6 +250,7 @@ struct ReadingView: View {
             inlineLayout: .stacked,
             inlineNotes: inlineNotes,
             appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+            speechRange: aloud.currentSentenceRange,
             selectionActive: pendingSelection != nil,
             onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
             onChapterBoundary: { direction in
@@ -887,14 +889,36 @@ struct ReadingView: View {
                 }
             }
 
-            Text("正在朗读 · 1.0×")
-                .font(.system(size: 11.5))
+            Button {
+                cycleAloudRate()
+            } label: {
+                Text(String(format: "%.2g×", aloud.rate))
+                    .font(.system(size: 11.5, weight: .bold))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                aloudAutoNext.toggle()
+            } label: {
+                Text("连读")
+                    .font(.system(size: 11))
+                    .opacity(aloudAutoNext ? 1 : 0.45)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .foregroundStyle(palette.window)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(palette.ink, in: Capsule())
         .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
+    }
+
+    private func cycleAloudRate() {
+        let steps: [Double] = [0.75, 1.0, 1.25, 1.5]
+        let index = steps.firstIndex(where: { abs($0 - aloud.rate) < 0.01 }) ?? 1
+        aloud.rate = steps[(index + 1) % steps.count]
     }
 
     private var backgroundColor: Color {
@@ -986,10 +1010,26 @@ struct ReadingView: View {
             aloud.stop()
             return
         }
-        if let text = pendingSelection?.text ?? currentChapterPlainText() {
-            let lang = book.languageTag?.hasPrefix("zh") == true ? "zh-CN" : "en-US"
-            aloud.speak(String(text.prefix(800)), language: lang)
+        let lang = book.languageTag?.hasPrefix("zh") == true ? "zh-CN" : "en-US"
+        if let selection = pendingSelection {
+            aloud.speak(selection.text, language: lang)
+            return
         }
+        guard let text = currentChapterPlainText() else { return }
+        // 从当前位置接着读, sentence by sentence; finishing the chapter
+        // rolls into the next when 自动下一章 is on.
+        aloud.onQueueFinished = { [self] in
+            guard aloudAutoNext,
+                  let chapterCount = epubBook?.chapters.count,
+                  currentChapterIndex < chapterCount - 1 else { return }
+            crossChapterBoundary(.forward, chapterCount: chapterCount)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                if let next = currentChapterPlainText() {
+                    aloud.speak(next, language: lang)
+                }
+            }
+        }
+        aloud.speak(text, fromUTF16Offset: currentUTF16Offset, language: lang)
     }
 
     private func resetChapterArtifacts() {

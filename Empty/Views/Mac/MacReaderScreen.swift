@@ -83,6 +83,7 @@ struct MacReaderScreen: View {
     @State private var chromeTimer: Task<Void, Never>?
     @State private var bookmarkedHere = false
     @State private var activityMeter = ReadingActivityMeter()
+    @AppStorage("reader.aloud.autonext") private var aloudAutoNext = false
     /// Per-chapter pre-translation activity for the TOC chips.
     @State private var pretransProgress: [Int: MacChapterTransStatus] = [:]
     /// Translated chapter titles for the bilingual TOC (kind `.title`).
@@ -309,6 +310,7 @@ struct MacReaderScreen: View {
                                         inlineLayout: readingMode == .bilingual ? .parallel : .stacked,
                                         inlineNotes: inlineNotes,
                                         appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+                                        speechRange: aloud.currentSentenceRange,
                                         selectionActive: pendingSelection != nil,
                                         onTap: { pendingSelection = nil },
                                         onChapterBoundary: { direction in
@@ -359,7 +361,11 @@ struct MacReaderScreen: View {
                 MacReadingAloudBar(
                     snippet: aloud.currentSnippet,
                     onToggle: { aloud.togglePause() },
-                    isPaused: !aloud.isSpeaking
+                    isPaused: !aloud.isSpeaking,
+                    rate: aloud.rate,
+                    onCycleRate: { cycleAloudRate() },
+                    autoNext: aloudAutoNext,
+                    onToggleAutoNext: { aloudAutoNext.toggle() }
                 )
                 .padding(.bottom, 22)
             }
@@ -551,7 +557,11 @@ struct MacReaderScreen: View {
                     MacReadingAloudBar(
                         snippet: aloud.currentSnippet,
                         onToggle: { aloud.togglePause() },
-                        isPaused: !aloud.isSpeaking
+                        isPaused: !aloud.isSpeaking,
+                        rate: aloud.rate,
+                        onCycleRate: { cycleAloudRate() },
+                        autoNext: aloudAutoNext,
+                        onToggleAutoNext: { aloudAutoNext.toggle() }
                     )
                     .padding(.bottom, 22)
                 }
@@ -1591,15 +1601,37 @@ struct MacReaderScreen: View {
         ).first
     }
 
+    private func cycleAloudRate() {
+        let steps: [Double] = [0.75, 1.0, 1.25, 1.5]
+        let index = steps.firstIndex(where: { abs($0 - aloud.rate) < 0.01 }) ?? 1
+        aloud.rate = steps[(index + 1) % steps.count]
+    }
+
     private func toggleReadingAloud() {
         if aloud.isSpeaking {
             aloud.stop()
             return
         }
-        if let text = pendingSelection?.text ?? currentChapterRecord?.text {
-            let lang = book.languageTag?.hasPrefix("zh") == true ? "zh-CN" : "en-US"
-            aloud.speak(String(text.prefix(800)), language: lang)
+        let lang = book.languageTag?.hasPrefix("zh") == true ? "zh-CN" : "en-US"
+        if let selection = pendingSelection {
+            aloud.speak(selection.text, language: lang)
+            return
         }
+        guard let text = currentChapterRecord?.text else { return }
+        // 从当前位置接着读; finishing the chapter rolls into the next
+        // when 自动下一章 is on.
+        aloud.onQueueFinished = { [self] in
+            guard aloudAutoNext,
+                  let chapterCount = epubBook?.chapters.count,
+                  currentChapterIndex < chapterCount - 1 else { return }
+            crossChapterBoundary(.forward, chapterCount: chapterCount)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                if let next = currentChapterRecord?.text {
+                    aloud.speak(next, language: lang)
+                }
+            }
+        }
+        aloud.speak(text, fromUTF16Offset: currentUTF16Offset, language: lang)
     }
 
     // MARK: Loading & progress

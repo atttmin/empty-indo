@@ -27,6 +27,9 @@ struct NativeChapterReaderView: View {
     let inlineLayout: InlineNoteLayout
     let inlineNotes: [InlineNotePaint]
     var appearance: ReaderAppearance = ReaderAppearance()
+    /// The sentence being read aloud (chapter UTF-16) — painted as a
+    /// vermilion follow-along underline.
+    var speechRange: Range<Int>? = nil
     var selectionActive: Bool = false
     var onTap: () -> Void = {}
     var onChapterBoundary: (PageTurnDirection) -> Void = { _ in }
@@ -61,6 +64,7 @@ struct NativeChapterReaderView: View {
         inlineLayout: InlineNoteLayout = .stacked,
         inlineNotes: [InlineNotePaint],
         appearance: ReaderAppearance = ReaderAppearance(),
+        speechRange: Range<Int>? = nil,
         selectionActive: Bool = false,
         onTap: @escaping () -> Void = {},
         onChapterBoundary: @escaping (PageTurnDirection) -> Void = { _ in },
@@ -81,6 +85,7 @@ struct NativeChapterReaderView: View {
         self.inlineLayout = inlineLayout
         self.inlineNotes = inlineNotes
         self.appearance = appearance
+        self.speechRange = speechRange
         self.selectionActive = selectionActive
         self.onTap = onTap
         self.onChapterBoundary = onChapterBoundary
@@ -416,6 +421,11 @@ struct NativeChapterReaderView: View {
                 }
                 localRanges.append(NativeHighlightRange(range: fallback, colorHex: color))
             }
+        }
+        if let speechRange,
+           let span = blockSpans[block.id],
+           let local = span.localRange(intersecting: speechRange) {
+            localRanges.append(NativeHighlightRange(range: local, colorHex: 0xD86B47))
         }
         return localRanges
     }
