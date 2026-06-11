@@ -49,6 +49,8 @@ struct MacReaderScreen: View {
     @State private var recapCache: RecapCache?
     @AppStorage("reader.fontSize") private var fontSize: Double = 18
     @AppStorage("reader.lineSpacing") private var lineSpacing: Double = 1.8
+    @AppStorage("reader.theme") private var readerTheme: ReaderTheme = .paper
+    @AppStorage("reader.font") private var readerFont: ReaderFont = .serif
     @State private var pendingSelection: ReaderSelection?
     @State private var chapterHighlights: [HighlightPaint] = []
     @State private var showChapterSelection = false
@@ -248,6 +250,7 @@ struct MacReaderScreen: View {
                                 inlineMode: inlineNoteKind,
                                 inlineLayout: readingMode == .bilingual ? .parallel : .stacked,
                                 inlineNotes: inlineNotes,
+                                appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
                                 selectionActive: pendingSelection != nil,
                                 onTap: { pendingSelection = nil },
                                 onChapterBoundary: { direction in
@@ -264,6 +267,7 @@ struct MacReaderScreen: View {
 
                             selectionOverlay
                         }
+                        .environment(\.emptyPalette, readerTheme.palette(base: palette))
                         Rectangle().fill(palette.line).frame(height: 1)
                         bottomBar(epub)
                     }
@@ -301,9 +305,11 @@ struct MacReaderScreen: View {
         .sheet(isPresented: $showSettings) {
             ReadingSettingsView(
                 fontSize: $fontSize,
-                lineSpacing: $lineSpacing
+                lineSpacing: $lineSpacing,
+                theme: $readerTheme,
+                font: $readerFont
             )
-            .frame(minWidth: 320, minHeight: 280)
+            .frame(minWidth: 340, minHeight: 460)
         }
         .sheet(isPresented: $showRecap) {
             RecapView(
@@ -486,9 +492,11 @@ struct MacReaderScreen: View {
             .sheet(isPresented: $showSettings) {
                 ReadingSettingsView(
                     fontSize: $fontSize,
-                    lineSpacing: $lineSpacing
+                    lineSpacing: $lineSpacing,
+                    theme: $readerTheme,
+                    font: $readerFont
                 )
-                .frame(minWidth: 320, minHeight: 280)
+                .frame(minWidth: 340, minHeight: 460)
             }
             .sheet(isPresented: $showRecap) {
                 RecapView(

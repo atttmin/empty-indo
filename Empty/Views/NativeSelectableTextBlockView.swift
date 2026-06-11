@@ -41,6 +41,10 @@ private nonisolated struct NativeTextRenderModel: Equatable {
     var tone: NativeTextTone
     var isDark: Bool
     var monospaced = false
+    var fontFamily: String? = nil
+    var useSerifDesign = true
+    var inkPrimaryHex: UInt32? = nil
+    var inkSecondaryHex: UInt32? = nil
     var highlightSegments: [NativeHighlightSegment]
 }
 
@@ -53,6 +57,10 @@ struct NativeSelectableTextBlockView: View {
     let highlightRanges: [Range<Int>]
     let isDark: Bool
     var monospaced: Bool = false
+    var fontFamily: String? = nil
+    var useSerifDesign: Bool = true
+    var inkPrimaryHex: UInt32? = nil
+    var inkSecondaryHex: UInt32? = nil
     var selectedRange: Range<Int>? = nil
     var scrollTargetOffset: Int? = nil
     var clearSelection: Bool = false
@@ -68,6 +76,10 @@ struct NativeSelectableTextBlockView: View {
                 tone: tone,
                 isDark: isDark,
                 monospaced: monospaced,
+                fontFamily: fontFamily,
+                useSerifDesign: useSerifDesign,
+                inkPrimaryHex: inkPrimaryHex,
+                inkSecondaryHex: inkSecondaryHex,
                 highlightSegments: highlightRanges.map {
                     NativeHighlightSegment(
                         startUTF16: $0.lowerBound,
@@ -91,8 +103,14 @@ private func makeAttributedText(from model: NativeTextRenderModel) -> NSAttribut
     paragraph.paragraphSpacing = 0
 
     let attributes: [NSAttributedString.Key: Any] = [
-        .font: nativeFont(size: model.fontSize, weight: model.weight, monospaced: model.monospaced),
-        .foregroundColor: nativeTextColor(tone: model.tone, isDark: model.isDark),
+        .font: nativeFont(
+            size: model.fontSize,
+            weight: model.weight,
+            monospaced: model.monospaced,
+            family: model.fontFamily,
+            useSerifDesign: model.useSerifDesign
+        ),
+        .foregroundColor: nativeTextColor(model: model),
         .paragraphStyle: paragraph,
     ]
     let attributed = NSMutableAttributedString(string: model.text, attributes: attributes)
@@ -111,15 +129,14 @@ private func makeAttributedText(from model: NativeTextRenderModel) -> NSAttribut
     return attributed
 }
 
-private func nativeTextColor(
-    tone: NativeTextTone,
-    isDark: Bool
-) -> NativePlatformColor {
-    switch (tone, isDark) {
-    case (.primary, false): return NativePlatformColor(hex: 0x2A2419)
-    case (.secondary, false): return NativePlatformColor(hex: 0x5C5443)
-    case (.primary, true): return NativePlatformColor(hex: 0xEDE5D4)
-    case (.secondary, true): return NativePlatformColor(hex: 0xC4B9A4)
+private func nativeTextColor(model: NativeTextRenderModel) -> NativePlatformColor {
+    switch model.tone {
+    case .primary:
+        if let hex = model.inkPrimaryHex { return NativePlatformColor(hex: hex) }
+        return NativePlatformColor(hex: model.isDark ? 0xEDE5D4 : 0x2A2419)
+    case .secondary:
+        if let hex = model.inkSecondaryHex { return NativePlatformColor(hex: hex) }
+        return NativePlatformColor(hex: model.isDark ? 0xC4B9A4 : 0x5C5443)
     }
 }
 
@@ -128,13 +145,33 @@ private func nativeHighlightColor(isDark: Bool) -> NativePlatformColor {
 }
 
 #if canImport(UIKit)
-private func nativeFont(size: Double, weight: NativeTextWeight, monospaced: Bool = false) -> UIFont {
+private func nativeFont(
+    size: Double,
+    weight: NativeTextWeight,
+    monospaced: Bool = false,
+    family: String? = nil,
+    useSerifDesign: Bool = true
+) -> UIFont {
     let uiWeight: UIFont.Weight = weight == .bold ? .bold : .regular
     if monospaced {
         return UIFont.monospacedSystemFont(ofSize: size, weight: uiWeight)
     }
+    if let family {
+        var descriptor = UIFontDescriptor(fontAttributes: [.family: family])
+        if weight == .bold,
+           let bold = descriptor.withSymbolicTraits(.traitBold) {
+            descriptor = bold
+        }
+        let font = UIFont(descriptor: descriptor, size: size)
+        // A descriptor for an unknown family silently resolves to the
+        // default sans — only trust it when the family really matched.
+        if font.familyName == family || font.fontName.contains(family.replacingOccurrences(of: " ", with: "")) {
+            return font
+        }
+    }
     let base = UIFont.systemFont(ofSize: size, weight: uiWeight)
-    guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
+    guard useSerifDesign,
+          let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
     return UIFont(descriptor: descriptor, size: size)
 }
 
@@ -234,13 +271,30 @@ private struct NativeSelectableTextRepresentable: UIViewRepresentable {
     }
 }
 #elseif canImport(AppKit)
-private func nativeFont(size: Double, weight: NativeTextWeight, monospaced: Bool = false) -> NSFont {
+private func nativeFont(
+    size: Double,
+    weight: NativeTextWeight,
+    monospaced: Bool = false,
+    family: String? = nil,
+    useSerifDesign: Bool = true
+) -> NSFont {
     let nsWeight: NSFont.Weight = weight == .bold ? .bold : .regular
     if monospaced {
         return NSFont.monospacedSystemFont(ofSize: size, weight: nsWeight)
     }
+    if let family {
+        var descriptor = NSFontDescriptor(fontAttributes: [.family: family])
+        if weight == .bold {
+            descriptor = descriptor.withSymbolicTraits(.bold)
+        }
+        if let font = NSFont(descriptor: descriptor, size: size),
+           font.familyName == family {
+            return font
+        }
+    }
     let base = NSFont.systemFont(ofSize: size, weight: nsWeight)
-    guard let descriptor = base.fontDescriptor.withDesign(.serif),
+    guard useSerifDesign,
+          let descriptor = base.fontDescriptor.withDesign(.serif),
           let font = NSFont(descriptor: descriptor, size: size) else {
         return base
     }

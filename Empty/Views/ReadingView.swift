@@ -102,8 +102,14 @@ struct ReadingView: View {
     var onControlsChange: ((Bool) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.emptyPalette) private var palette
+    @Environment(\.emptyPalette) private var shellPalette
     @Environment(\.modelContext) private var modelContext
+
+    /// The reader screen runs under its own canvas theme; every existing
+    /// `palette.` reference below resolves through it.
+    private var palette: EmptyPalette {
+        readerTheme.palette(base: shellPalette)
+    }
 
     @State private var epubBook: EPUBBook?
     @State private var pdfDocumentURL: URL?
@@ -127,6 +133,8 @@ struct ReadingView: View {
     @State private var showControls = true
     @AppStorage("reader.fontSize") private var fontSize: Double = 18
     @AppStorage("reader.lineSpacing") private var lineSpacing: Double = 1.6
+    @AppStorage("reader.theme") private var readerTheme: ReaderTheme = .paper
+    @AppStorage("reader.font") private var readerFont: ReaderFont = .serif
     @AppStorage("reader.mode.ios") private var readingMode: IOSReadingMode = .original
     @State private var inlineNotes: [InlineNotePaint] = []
     @State private var inlineCache: [Int: String] = [:]
@@ -207,6 +215,7 @@ struct ReadingView: View {
         #if os(iOS)
         .statusBarHidden(!showControls)
         #endif
+        .environment(\.emptyPalette, palette)
     }
 
     private func exitReader() {
@@ -243,6 +252,7 @@ struct ReadingView: View {
                     inlineMode: inlineNoteKind,
                     inlineLayout: .stacked,
                     inlineNotes: inlineNotes,
+                    appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
                     selectionActive: pendingSelection != nil,
                     onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
                     onChapterBoundary: { direction in
@@ -279,7 +289,9 @@ struct ReadingView: View {
         .sheet(isPresented: $showSettings) {
             ReadingSettingsView(
                 fontSize: $fontSize,
-                lineSpacing: $lineSpacing
+                lineSpacing: $lineSpacing,
+                theme: $readerTheme,
+                font: $readerFont
             )
             #if os(iOS)
             .presentationDetents([.medium])
@@ -1307,6 +1319,8 @@ struct ChapterListView: View {
 struct ReadingSettingsView: View {
     @Binding var fontSize: Double
     @Binding var lineSpacing: Double
+    @Binding var theme: ReaderTheme
+    @Binding var font: ReaderFont
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.emptyPalette) private var palette
@@ -1356,6 +1370,20 @@ struct ReadingSettingsView: View {
                     }
                     .foregroundStyle(palette.ink2)
                 }
+                settingRow(label: "字体") {
+                    HStack(spacing: 8) {
+                        ForEach(ReaderFont.allCases, id: \.self) { choice in
+                            fontChip(choice)
+                        }
+                    }
+                }
+                settingRow(label: "主题") {
+                    HStack(spacing: 10) {
+                        ForEach(ReaderTheme.allCases, id: \.self) { choice in
+                            themeSwatch(choice)
+                        }
+                    }
+                }
                 Text("\u{201C}I went to the woods because I wished to live deliberately…\u{201D}")
                     .font(.system(size: fontSize * 0.8, design: .serif))
                     .lineSpacing(fontSize * 0.8 * (lineSpacing - 1))
@@ -1370,9 +1398,63 @@ struct ReadingSettingsView: View {
         }
         .background(palette.window)
         #if os(iOS)
-        .presentationDetents([.medium])
+        .presentationDetents([.large, .medium])
         .presentationDragIndicator(.visible)
         #endif
+    }
+
+    private func fontChip(_ choice: ReaderFont) -> some View {
+        Button {
+            font = choice
+        } label: {
+            Text(choice.title)
+                .font(.system(size: 12.5, weight: font == choice ? .bold : .regular))
+                .foregroundStyle(font == choice ? palette.onAccent : palette.ink2)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 7)
+                .background(
+                    font == choice ? palette.accent : palette.side,
+                    in: Capsule()
+                )
+                .overlay(
+                    Capsule().strokeBorder(
+                        font == choice ? palette.accent : palette.line2,
+                        lineWidth: 1
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func themeSwatch(_ choice: ReaderTheme) -> some View {
+        Button {
+            theme = choice
+        } label: {
+            VStack(spacing: 5) {
+                Circle()
+                    .fill(choice.swatch)
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Circle().strokeBorder(
+                            theme == choice ? palette.accent : palette.line2,
+                            lineWidth: theme == choice ? 2 : 1
+                        )
+                    )
+                    .overlay {
+                        if theme == choice {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(
+                                    choice == .night ? Color(hex: 0xEDE5D4) : Color(hex: 0x2A2419)
+                                )
+                        }
+                    }
+                Text(choice.title)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(theme == choice ? palette.accent : palette.ink3)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func settingRow(

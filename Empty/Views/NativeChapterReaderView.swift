@@ -26,6 +26,7 @@ struct NativeChapterReaderView: View {
     let inlineMode: InlineNoteKind
     let inlineLayout: InlineNoteLayout
     let inlineNotes: [InlineNotePaint]
+    var appearance: ReaderAppearance = ReaderAppearance()
     var selectionActive: Bool = false
     var onTap: () -> Void = {}
     var onChapterBoundary: (PageTurnDirection) -> Void = { _ in }
@@ -58,6 +59,7 @@ struct NativeChapterReaderView: View {
         inlineMode: InlineNoteKind,
         inlineLayout: InlineNoteLayout = .stacked,
         inlineNotes: [InlineNotePaint],
+        appearance: ReaderAppearance = ReaderAppearance(),
         selectionActive: Bool = false,
         onTap: @escaping () -> Void = {},
         onChapterBoundary: @escaping (PageTurnDirection) -> Void = { _ in },
@@ -77,6 +79,7 @@ struct NativeChapterReaderView: View {
         self.inlineMode = inlineMode
         self.inlineLayout = inlineLayout
         self.inlineNotes = inlineNotes
+        self.appearance = appearance
         self.selectionActive = selectionActive
         self.onTap = onTap
         self.onChapterBoundary = onChapterBoundary
@@ -210,6 +213,10 @@ struct NativeChapterReaderView: View {
                     tone: .secondary,
                     highlightRanges: localHighlightRanges(for: block),
                     isDark: palette.isDark,
+                    fontFamily: appearance.font.familyName,
+                    useSerifDesign: appearance.font.usesSerifDesign,
+                    inkPrimaryHex: inkHexes.primary,
+                    inkSecondaryHex: inkHexes.secondary,
                     clearSelection: !selectionActive || activeSelectionBlockID != block.id,
                     onSelectionChange: { updateSelection(for: block, localRange: $0) }
                 )
@@ -232,6 +239,8 @@ struct NativeChapterReaderView: View {
             highlightRanges: localHighlightRanges(for: block),
             isDark: palette.isDark,
             monospaced: true,
+            inkPrimaryHex: inkHexes.primary,
+            inkSecondaryHex: inkHexes.secondary,
             clearSelection: !selectionActive || activeSelectionBlockID != block.id,
             onSelectionChange: { updateSelection(for: block, localRange: $0) }
         )
@@ -322,6 +331,10 @@ struct NativeChapterReaderView: View {
         .background(visibilityProbe(for: block))
     }
 
+    private var inkHexes: (primary: UInt32, secondary: UInt32) {
+        appearance.theme.inkHexes(baseIsDark: palette.isDark)
+    }
+
     private func selectableText(
         for block: NativeChapterBlock,
         fontSize: Double,
@@ -343,6 +356,10 @@ struct NativeChapterReaderView: View {
                 tone: tone,
                 highlightRanges: localHighlightRanges(for: block),
                 isDark: palette.isDark,
+                fontFamily: appearance.font.familyName,
+                useSerifDesign: appearance.font.usesSerifDesign,
+                inkPrimaryHex: inkHexes.primary,
+                inkSecondaryHex: inkHexes.secondary,
                 clearSelection: !selectionActive || activeSelectionBlockID != block.id,
                 onSelectionChange: { updateSelection(for: block, localRange: $0) }
             )
