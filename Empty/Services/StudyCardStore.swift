@@ -15,7 +15,7 @@ struct StudyCardStore {
         book: Book,
         maxCount: Int = 3
     ) async throws -> [StudyCardEntry] {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .vocab)
         let cards = try await resolution.service.flashcards(
             from: highlight.textSnapshot,
             maxCount: maxCount

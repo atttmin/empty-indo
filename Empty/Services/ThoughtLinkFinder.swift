@@ -61,7 +61,7 @@ struct ThoughtLinkFinder {
     }
 
     func explainLink(_ link: ThoughtLink) async throws -> String {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
         let question = """
         Two passages from a reader's library may be thematically linked. \
         In 2-3 Chinese sentences, explain why they connect. Start with \

@@ -416,7 +416,7 @@ struct MacReaderScreen: View {
             // mode; cached translations rejoin instantly.
             inlineNotes = []
             inlineAIUnavailable = newMode != .original
-                && !AIProviderSettings.load().resolveUsableService()
+                && !AIProviderRegistry.load().resolveUsableService(feature: .translate)
                     .service.availability.isAvailable
             startPretranslation()
         }
@@ -1141,7 +1141,7 @@ struct MacReaderScreen: View {
         Task {
             defer { isSelectionWorking = false }
             do {
-                let resolution = AIProviderSettings.load().resolveUsableService()
+                let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
                 let service = resolution.service
                 let passage = GroundedPassage(id: 0, text: selection.text)
                 let source = chapterSourceLabel
@@ -1235,7 +1235,7 @@ struct MacReaderScreen: View {
         }
         guard let text = currentChapterRecord?.text, !text.isEmpty else { return }
         do {
-            let resolution = AIProviderSettings.load().resolveUsableService()
+            let resolution = AIProviderRegistry.load().resolveUsableService(feature: .recap)
             let summary = try await resolution.service.summarize(
                 String(text.prefix(6_000)),
                 focus: .digest
@@ -1260,7 +1260,7 @@ struct MacReaderScreen: View {
             return
         }
         guard let text = currentChapterRecord?.text, !text.isEmpty else { return }
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .recap)
         guard resolution.service.availability.isAvailable else { return }
         do {
             let answer = try await resolution.service.answer(
@@ -1334,7 +1334,7 @@ struct MacReaderScreen: View {
         mode: MacReadingMode,
         chapter: Int
     ) async {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .translate)
         guard resolution.service.availability.isAvailable else {
             for paragraph in paragraphs {
                 inlineInFlight.remove(inlineKey(mode, chapter, paragraph.idx))
@@ -1404,12 +1404,12 @@ struct MacReaderScreen: View {
     }
 
     private func pretranslate(from startChapter: Int) async {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .translate)
         guard resolution.service.availability.isAvailable else { return }
         // Whole-chapter pretranslation saturates the machine when the
         // model runs locally — reading janks. On-device stays
         // per-viewport; only cloud providers cache ahead.
-        guard resolution.route == .cloud else { return }
+        guard !resolution.provider.isLocal else { return }
         let store = TranslationStore(modelContext: modelContext)
         let bookID = book.id
         let chapters = (try? modelContext.fetch(
@@ -1535,7 +1535,7 @@ struct MacReaderScreen: View {
         defer { isGuideLoading = false }
         guard let text = currentChapterRecord?.text, !text.isEmpty else { return }
         do {
-            let resolution = AIProviderSettings.load().resolveUsableService()
+            let resolution = AIProviderRegistry.load().resolveUsableService(feature: .recap)
             let clipped = String(text.prefix(4_000))
             if readingMode == .bilingual {
                 modeGuideText = try await AITransientRetry.run {
@@ -1676,7 +1676,7 @@ struct MacReaderScreen: View {
                 }
                 isLoading = false
                 inlineAIUnavailable = readingMode != .original
-                    && !AIProviderSettings.load().resolveUsableService()
+                    && !AIProviderRegistry.load().resolveUsableService(feature: .translate)
                         .service.availability.isAvailable
                 startSession()
                 startPretranslation()

@@ -156,7 +156,7 @@ struct RecapView: View {
     private func generate() async {
         phase = .loading
         do {
-            let resolution = AIProviderSettings.load().resolveUsableService()
+            let resolution = AIProviderRegistry.load().resolveUsableService(feature: .recap)
             let service = resolution.service
             let builder = RecapBuilder(
                 modelContext: modelContext,
@@ -166,7 +166,7 @@ struct RecapView: View {
             )
             let recap = try await builder.recap(for: book, before: position)
             routeNote = resolution.fellBack
-                ? Self.fallbackNote(for: resolution.route)
+                ? Self.fallbackNote(for: resolution.provider.isLocal ? .onDevice : .cloud)
                 : nil
             cache = RecapCache(position: position, text: recap)
             phase = .ready(recap)

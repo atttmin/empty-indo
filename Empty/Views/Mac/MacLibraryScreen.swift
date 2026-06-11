@@ -356,7 +356,7 @@ private struct ContinueReadingHero: View {
                 || chapter.utf16Length < RecapBuilder.inlineSummaryThreshold
         }) else { return }
 
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .recap)
         guard resolution.service.availability.isAvailable else { return }
         do {
             let recap = try await RecapBuilder(

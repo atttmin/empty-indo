@@ -920,7 +920,7 @@ struct ReadingView: View {
         Task {
             defer { isSelectionWorking = false }
             do {
-                let resolution = AIProviderSettings.load().resolveUsableService()
+                let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
                 let question = action == .explain
                     ? "Explain this passage to a thoughtful reader. Reply in Chinese with etymology or nuance when helpful."
                     : "Translate this passage into natural Chinese, preserving literary tone."
@@ -1071,7 +1071,7 @@ struct ReadingView: View {
         chapter: Int,
         mode: IOSReadingMode
     ) async {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .translate)
         guard resolution.service.availability.isAvailable else {
             for paragraph in paragraphs {
                 inlineInFlight.remove(inlineNoteKey(chapter: chapter, idx: paragraph.idx))
@@ -1140,12 +1140,12 @@ struct ReadingView: View {
     }
 
     private func pretranslate(from startChapter: Int) async {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .translate)
         guard resolution.service.availability.isAvailable else { return }
         // Whole-chapter pretranslation saturates the device when the
         // model runs locally — reading janks and the battery drains.
         // On-device stays per-viewport; only cloud providers cache ahead.
-        guard resolution.route == .cloud else { return }
+        guard !resolution.provider.isLocal else { return }
         let store = TranslationStore(modelContext: modelContext)
         let bookID = book.id
         let chapters = (try? modelContext.fetch(

@@ -15,6 +15,7 @@ struct AIDiagnosticsView: View {
     @Environment(\.emptyPalette) private var palette
 
     @State private var settings = AIProviderSettings.load()
+    @State private var registry = AIProviderRegistry.load()
     @State private var apiKey = KeychainStore.read(account: AIProviderSettings.apiKeyAccount) ?? ""
 
     @State private var sampleText = ""
@@ -38,6 +39,9 @@ struct AIDiagnosticsView: View {
 
                     statusRow
 
+                    sectionLabel("按功能分配")
+                    featureRouting
+
                     sectionLabel("连通性测试")
                     testCard
 
@@ -55,10 +59,86 @@ struct AIDiagnosticsView: View {
         #endif
         .onChange(of: settings) { _, newValue in
             newValue.save()
+            // The registry mirrors the legacy cloud config (linked entry)
+            // and the default provider follows the mode picker.
+            var next = AIProviderRegistry.load()
+            next.defaultProviderID = newValue.mode == .cloud
+                ? AIProviderRegistry.linkedCloudID
+                : AIProviderRegistry.localID
+            next.save()
+            registry = next
         }
         .onChange(of: apiKey) { _, newValue in
             persistAPIKey(newValue)
         }
+    }
+
+    // MARK: 按功能分配 (feature → provider routing)
+
+    /// The handoff's FeatureRoute: each feature's capsule cycles through
+    /// the provider list; unset features follow the默认 provider.
+    private var featureRouting: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(AIFeature.allCases, id: \.self) { feature in
+                HStack(spacing: 10) {
+                    Text(feature.title)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(palette.ink2)
+                        .frame(width: 92, alignment: .leading)
+                    Button {
+                        cycleRoute(for: feature)
+                    } label: {
+                        Text(routeLabel(for: feature))
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(
+                                registry.routes[feature.rawValue] == nil
+                                    ? palette.ink3 : palette.accent
+                            )
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 5)
+                            .background(palette.side, in: Capsule())
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    registry.routes[feature.rawValue] == nil
+                                        ? palette.line2 : palette.accentSoft2,
+                                    lineWidth: 1
+                                )
+                            )
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+            }
+            Text("点胶囊循环切换提供商；「默认」跟随上方选择的提供商。云端不可用时自动回退本机，正文阅读永不阻塞。")
+                .font(.system(size: 10.5))
+                .foregroundStyle(palette.ink3)
+        }
+        .padding(14)
+        .emptyCard(palette, radius: 12)
+    }
+
+    private func routeLabel(for feature: AIFeature) -> String {
+        guard let routed = registry.routes[feature.rawValue],
+              let provider = registry.provider(id: routed) else {
+            return "默认"
+        }
+        return provider.name
+    }
+
+    private func cycleRoute(for feature: AIFeature) {
+        var next = registry
+        let current = next.routes[feature.rawValue]
+        if current == nil {
+            next.route(feature, to: next.providers.first?.id)
+        } else if let index = next.providers.firstIndex(where: { $0.id == current }),
+                  index + 1 < next.providers.count {
+            next.route(feature, to: next.providers[index + 1].id)
+        } else {
+            next.route(feature, to: nil)
+        }
+        next.save()
+        registry = next
     }
 
     // MARK: Header

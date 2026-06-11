@@ -212,7 +212,7 @@ struct MacNotesScreen: View {
         let fallback =
             "AI 建议:你的 \(min(visibleHighlights.count, 3)) 条高亮已收录。继续阅读时留意跨书呼应,图谱会随笔记生长。"
         let samples = visibleHighlights.prefix(5).map(\.textSnapshot).joined(separator: "\n")
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
         guard resolution.service.availability.isAvailable else {
             graphSuggestion = fallback
             return

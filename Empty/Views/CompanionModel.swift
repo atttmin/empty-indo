@@ -75,7 +75,7 @@ final class CompanionModel {
                     return
                 }
 
-                let resolution = AIProviderSettings.load().resolveUsableService()
+                let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
                 // Agent first: the model decides which reading tools to
                 // use. Any failure falls back to plain grounded RAG so the
                 // companion never dead-ends.
@@ -89,7 +89,7 @@ final class CompanionModel {
                     let agent = ReadingAgent(
                         toolbox: toolbox,
                         service: resolution.service,
-                        maxSteps: resolution.route == .onDevice ? 3 : 4
+                        maxSteps: resolution.provider.isLocal ? 3 : 4
                     )
                     let reply = try await agent.run(question: question)
                     messages.append(Message(
@@ -175,7 +175,7 @@ final class CompanionModel {
 
         Task {
             do {
-                let resolution = AIProviderSettings.load().resolveUsableService()
+                let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
                 let toolbox = ReadingToolbox(
                     book: book,
                     position: position,

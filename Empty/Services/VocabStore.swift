@@ -57,7 +57,7 @@ struct VocabStore {
         sentence: String,
         source: String
     ) async throws -> VocabEntry {
-        let resolution = AIProviderSettings.load().resolveUsableService()
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .vocab)
         let service = resolution.service
         let question = """
         Explain the word "\(word)" as used in the sentence below. Reply in Chinese \
