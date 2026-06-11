@@ -222,7 +222,7 @@ case saveMemory(title: String, body: String, tags: [String])
 
 ### Phase 1 — 本地 ReaderMemory（已实现）
 
-**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory` 与 `ThoughtLinkFinder` 记忆召回路已落地；MemoryEmbedding 后台索引仍待 Phase 1b。
+**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory` 与 `ThoughtLinkFinder` 记忆召回路已落地；本地 `MemoryEmbedding` 持久语义路也已接上，后续只剩主题压缩 / 镜片 / 同步阶段。
 
 | 任务 ID | 内容 | 验收 |
 |---------|------|------|
@@ -235,16 +235,16 @@ case saveMemory(title: String, body: String, tags: [String])
 
 **预估改动文件**：
 
-- 新建：`Empty/Models/MemoryItem.swift`、`Empty/Services/ReaderMemory.swift`
-- 修改：`AppStores.swift`、`ReadingToolbox.swift`、`ThoughtLinkFinder.swift`、`CompanionModel.swift`
+- 新建：`Empty/Models/MemoryItem.swift`、`Empty/Models/MemoryEmbedding.swift`、`Empty/Services/MemoryIndexer.swift`
+- 修改：`AppStores.swift`、`ReaderMemory.swift`、`ReadingToolbox.swift`、`ThoughtLinkFinder.swift`、`CompanionModel.swift`
 - 测试：`EmptyTests/ReaderMemoryTests.swift`
 
-### Phase 1b — 本地语义索引（可选，与 P1 并行）
+### Phase 1b — 本地语义索引（已实现基础版）
 
-| 任务 ID | 内容 | 验收 |
+| 任务 ID | 内容 | 状态 |
 |---------|------|------|
-| P1b-1 | `MemoryEmbedding` + 后台索引 actor | 与 `SemanticIndexer` 同模式 |
-| P1b-2 | `recall()` 语义路 | 英文书测试；中文暂词法为主 |
+| P1b-1 | `MemoryEmbedding` 本地 store | 已实现：按 `itemID` 保存 `MemoryItem` 语义向量 |
+| P1b-2 | `recall()` 语义路 | 已实现：`ReaderMemory.recall()` 优先复用持久向量；无向量时退词法 |
 
 ### Phase 2 — 派生记忆 + 确认写入（部分实现）
 

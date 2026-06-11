@@ -395,6 +395,7 @@ struct ReadingToolbox {
             )
             modelContext.insert(item)
             try modelContext.save()
+            _ = try MemoryEmbeddingIndex.syncEmbeddings(for: Set([item.id]), in: modelContext)
             return "已记入读者记忆:\(title)"
         }
     }

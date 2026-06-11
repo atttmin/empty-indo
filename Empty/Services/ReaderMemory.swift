@@ -48,6 +48,7 @@ struct ReaderMemory {
             if let ref = item.sourceRefID { bySource[ref] = item }
         }
         var created = 0
+        var touchedIDs: Set<UUID> = []
 
         let highlights = try modelContext.fetch(FetchDescriptor<Highlight>())
         for highlight in highlights {
@@ -59,7 +60,9 @@ struct ReaderMemory {
                 chapterIndex: highlight.chapterIndex
             )
             if let item = bySource[highlight.id] {
-                update(item, title: title, body: body, sourceLabel: label)
+                if update(item, title: title, body: body, sourceLabel: label) {
+                    touchedIDs.insert(item.id)
+                }
             } else {
                 let item = MemoryItem(
                     kind: .highlightNote,
@@ -73,6 +76,7 @@ struct ReaderMemory {
                     isUserConfirmed: true
                 )
                 modelContext.insert(item)
+                touchedIDs.insert(item.id)
                 created += 1
             }
         }
@@ -88,7 +92,9 @@ struct ReaderMemory {
             let title = String(card.question.prefix(60))
             let body = "\(card.question.prefix(200))\n\(card.answer.prefix(400))"
             if let item = bySource[card.id] {
-                update(item, title: title, body: body, sourceLabel: card.source)
+                if update(item, title: title, body: body, sourceLabel: card.source) {
+                    touchedIDs.insert(item.id)
+                }
             } else {
                 let item = MemoryItem(
                     kind: kind,
@@ -101,11 +107,15 @@ struct ReaderMemory {
                     isUserConfirmed: true
                 )
                 modelContext.insert(item)
+                touchedIDs.insert(item.id)
                 created += 1
             }
         }
 
         try modelContext.save()
+        if !touchedIDs.isEmpty {
+            _ = try MemoryEmbeddingIndex.syncEmbeddings(for: touchedIDs, in: modelContext)
+        }
         return created
     }
 
@@ -114,20 +124,21 @@ struct ReaderMemory {
         title: String,
         body: String,
         sourceLabel: String?
-    ) {
+    ) -> Bool {
         guard item.title != title || item.body != body
-            || item.sourceLabel != sourceLabel else { return }
+            || item.sourceLabel != sourceLabel else { return false }
         item.title = title
         item.body = body
         item.sourceLabel = sourceLabel
         item.updatedAt = Date()
+        return true
     }
 
     // MARK: Recall
 
-    /// Blended recall (0.4 lexical + 0.6 semantic when embeddings are
-    /// available). Unconfirmed derived items never surface; the master
-    /// switch empties everything.
+    /// Blended recall (0.4 lexical + 0.6 semantic when persisted
+    /// `MemoryEmbedding` rows are available). Unconfirmed derived items
+    /// never surface; the master switch empties everything.
     func recall(
         query: String,
         kinds: Set<MemoryKind>? = nil,
@@ -139,20 +150,32 @@ struct ReaderMemory {
         guard !trimmed.isEmpty else { return [] }
 
         let items = try modelContext.fetch(FetchDescriptor<MemoryItem>())
+        let filtered = items.filter { item in
+            item.isUserConfirmed
+                && (kinds == nil || kinds?.contains(item.kind) == true)
+                && (bookID == nil || item.bookID == bookID)
+        }
         let queryVector = SemanticScorer.queryVector(for: trimmed)
+        if queryVector != nil {
+            _ = try MemoryEmbeddingIndex.syncEmbeddings(
+                for: Set(filtered.map(\.id)),
+                in: modelContext
+            )
+        }
+        let embeddings = try modelContext.fetch(FetchDescriptor<MemoryEmbedding>())
+        let embeddingByItemID = Dictionary(uniqueKeysWithValues: embeddings.map { ($0.itemID, $0) })
 
         var scored: [(MemoryRecall, Double)] = []
-        for item in items where item.isUserConfirmed {
-            if let kinds, !kinds.contains(item.kind) { continue }
-            if let bookID, item.bookID != bookID { continue }
-            let text = "\(item.title) \(item.body)"
+        for item in filtered {
+            let text = MemoryEmbeddingIndex.memoryText(for: item)
             let lexical = LexicalScorer.score(query: trimmed, text: text)
             var semantic = 0.0
             if let queryVector,
-               let candidate = SemanticScorer.queryVector(for: text),
-               candidate.languageTag == queryVector.languageTag {
+               let candidate = embeddingByItemID[item.id],
+               candidate.languageTag == queryVector.languageTag,
+               let candidateVector = candidate.embeddingVector {
                 semantic = SemanticScorer.cosineSimilarity(
-                    queryVector.vector, candidate.vector
+                    queryVector.vector, candidateVector
                 )
             }
             // Gate on either route being individually convincing —

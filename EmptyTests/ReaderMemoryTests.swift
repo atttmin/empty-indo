@@ -2,9 +2,9 @@
 //  ReaderMemoryTests.swift
 //  EmptyTests
 //
-//  Phase 1 of READER-MEMORY-PLAN: idempotent ingest from reader data,
-//  recall with provenance, the amnesia master switch, and the
-//  confirm-gated propose_memory write.
+//  Phase 1/2/1b of READER-MEMORY-PLAN: idempotent ingest from reader
+//  data, persisted local semantic embeddings, recall with provenance, the
+//  amnesia master switch, and the confirm-gated propose_memory write.
 //
 
 import Foundation
@@ -133,6 +133,71 @@ struct ReaderMemoryTests {
         let miss = try await toolbox.run("recall_reader_memory", argument: "quantum entanglement")
         #expect(!miss.citedMemory)
 
+        _ = container
+    }
+
+    @Test func memoryIndexerPersistsEmbeddingsForConfirmedItems() throws {
+        let (container, _) = try makeFixture()
+        let context = container.mainContext
+        let item = MemoryItem(
+            kind: .companionQA,
+            title: "How does subtraction clarify attention?",
+            body: "By removing noise until the core idea stays visible.",
+            sourceLabel: "Walden · Notes",
+            isUserConfirmed: true
+        )
+        context.insert(item)
+        try context.save()
+
+        let processed = try MemoryIndexer(modelContext: context).indexAll()
+        let embeddings = try context.fetch(FetchDescriptor<MemoryEmbedding>())
+        let canEmbed = SemanticScorer.queryVector(
+            for: MemoryEmbeddingIndex.memoryText(for: item)
+        ) != nil
+
+        if canEmbed {
+            #expect(processed == 1)
+            #expect(embeddings.count == 1)
+            #expect(embeddings[0].itemID == item.id)
+            #expect(embeddings[0].embeddingVector != nil)
+        } else {
+            #expect(processed == 0)
+            #expect(embeddings.isEmpty)
+        }
+
+        _ = container
+    }
+
+    @Test func recallUsesPersistedMemoryEmbeddings() throws {
+        guard let query = SemanticScorer.queryVector(for: "subtracting complexity from life") else {
+            return
+        }
+        let (container, _) = try makeFixture()
+        let context = container.mainContext
+        let item = MemoryItem(
+            kind: .theme,
+            title: "Quiet discipline",
+            body: "Silent practice under winter trees.",
+            sourceLabel: "Walden",
+            isUserConfirmed: true
+        )
+        context.insert(item)
+        let embedding = MemoryEmbedding(
+            itemID: item.id,
+            sourceUpdatedAt: item.updatedAt,
+            languageTag: query.languageTag
+        )
+        embedding.setEmbedding(vector: query.vector, languageTag: query.languageTag)
+        context.insert(embedding)
+        try context.save()
+
+        let hits = try ReaderMemory(modelContext: context).recall(
+            query: "subtracting complexity from life",
+            kinds: [.theme],
+            limit: 1
+        )
+
+        #expect(hits.first?.itemID == item.id)
         _ = container
     }
 }

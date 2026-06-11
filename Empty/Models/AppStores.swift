@@ -13,9 +13,9 @@ import SwiftData
 ///   (`Book`, `Highlight`, `ReadingSession`). Small, precious, written to
 ///   sync via CloudKit. Models follow CloudKit rules: attributes defaulted
 ///   or optional, relationships optional, no unique constraints.
-/// - **Local** — bulky derived text (`Chapter`, `Chunk`, embeddings).
-///   Always re-derivable from the imported file; never leaves the device
-///   (quota, copyright, privacy).
+/// - **Local** — bulky derived text (`Chapter`, `Chunk`), translation cache,
+///   and on-device semantic vectors (`ParagraphTranslation`, `MemoryEmbedding`).
+///   Always re-derivable from the imported file or synced reader state; never
 ///
 /// Cross-store references go through `Book.id` only. SwiftData cannot relate
 /// models across stores, and that constraint is load-bearing: it keeps book
@@ -43,6 +43,7 @@ enum AppStores {
         Chapter.self,
         Chunk.self,
         ParagraphTranslation.self,
+        MemoryEmbedding.self,
     ])
 
     /// - Parameter ephemeral: throwaway per-container stores for tests and
@@ -94,6 +95,7 @@ enum AppStores {
             Chapter.self,
             Chunk.self,
             ParagraphTranslation.self,
+            MemoryEmbedding.self,
         ])
         do {
             return try ModelContainer(for: allModels, configurations: synced, local)

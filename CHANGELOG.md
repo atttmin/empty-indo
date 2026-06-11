@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a deterministic XCUITest smoke flow for seeded reader → highlights
   → export → copy, so the product loop has UI coverage beyond screenshots.
 
+- Added local `MemoryEmbedding` persistence plus a `MemoryIndexer` pass so
+  confirmed ReaderMemory entries can reuse on-device semantic vectors
+  across recalls instead of re-embedding every candidate on demand.
+
 - 语言设置 (per the 语言设置原型 design): a global目标语言 (简中/繁中/
   English/日本語) that 译文、释义、朱的回答 all follow, with 作用范围 rows
   to fix 释义 or 朱的回答 to a different language. 源语言 defaults to
