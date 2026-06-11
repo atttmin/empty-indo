@@ -31,6 +31,8 @@ nonisolated struct HighlightPaint: Codable, Equatable {
     var text: String
     var startUTF16: Int? = nil
     var endUTF16: Int? = nil
+    /// Underline tint; nil renders as the default gold.
+    var colorHex: UInt32? = nil
 }
 
 /// Reader text mode — the prototype's 原文 / 双语对照 / 导读 toggle,
@@ -129,6 +131,9 @@ struct ReadingView: View {
     @State private var chapterHighlights: [HighlightPaint] = []
     @State private var showHighlights = false
     @State private var showChapterSelection = false
+    @State private var selectionZhuOpen = false
+    @State private var showDictionary = false
+    @State private var dictionaryTerm = ""
     @State private var saveErrorMessage: String?
     @State private var showControls = true
     @AppStorage("reader.fontSize") private var fontSize: Double = 18
@@ -393,6 +398,12 @@ struct ReadingView: View {
         .onChange(of: showHighlights) { _, isShowing in
             if !isShowing { refreshChapterHighlights() }
         }
+        #if os(iOS)
+        .sheet(isPresented: $showDictionary, onDismiss: { pendingSelection = nil }) {
+            DictionaryLookupView(term: dictionaryTerm)
+                .ignoresSafeArea()
+        }
+        #endif
         .alert(
             "Couldn't Save Highlight",
             isPresented: Binding(
@@ -660,26 +671,57 @@ struct ReadingView: View {
         .padding(.bottom, 76)
     }
 
-    /// 解释 / 翻译 / 追问 / 高亮 on the prototype's dark pill.
+    /// 划词菜单 per the P0 spec: marker dots and quiet utilities lead,
+    /// the AI verbs expand from the trailing 朱 › group.
     private var selectionBar: some View {
         HStack(spacing: 2) {
-            selectionButton("解释") { runSelectionAction(.explain) }
-            selectionButton("翻译") { runSelectionAction(.translate) }
-            Button {
-                if let selection = pendingSelection {
-                    askCompanion(about: selection.text)
+            ForEach(HighlightColor.readerChoices, id: \.self) { color in
+                Button {
+                    saveHighlight(color: color)
+                } label: {
+                    Circle()
+                        .fill(Color(hex: color.hex))
+                        .frame(width: 15, height: 15)
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+                        .padding(5)
+                        .contentShape(Circle())
                 }
-            } label: {
-                Text("追问 ↩")
-                    .font(.system(size: 12.5, weight: .bold))
-                    .foregroundStyle(palette.onAccent)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
-                    .background(palette.accent, in: RoundedRectangle(cornerRadius: 8))
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            selectionDivider
+            selectionButton("复制") { copySelection() }
+            selectionButton("词典") { lookUpDictionary() }
             selectionButton("跨段") { showChapterSelection = true }
-            selectionButton("高亮") { saveHighlight() }
+            selectionDivider
+            if selectionZhuOpen {
+                selectionButton("解释") { runSelectionAction(.explain) }
+                selectionButton("翻译") { runSelectionAction(.translate) }
+                Button {
+                    if let selection = pendingSelection {
+                        askCompanion(about: selection.text)
+                    }
+                } label: {
+                    Text("追问 ↩")
+                        .font(.system(size: 12.5, weight: .bold))
+                        .foregroundStyle(palette.onAccent)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 7)
+                        .background(palette.accent, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { selectionZhuOpen = true }
+                } label: {
+                    Text("朱 ›")
+                        .font(.system(size: 12.5, weight: .bold, design: .serif))
+                        .foregroundStyle(Color(hex: 0xD86B47))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 7)
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
             if isSelectionWorking {
                 ProgressView()
                     .controlSize(.small)
@@ -689,6 +731,43 @@ struct ReadingView: View {
         .padding(5)
         .background(palette.ink, in: RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.3), radius: 14, y: 7)
+        .onChange(of: pendingSelection) { _, selection in
+            if selection == nil { selectionZhuOpen = false }
+        }
+    }
+
+    private var selectionDivider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.16))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 3)
+    }
+
+    private func copySelection() {
+        guard let selection = pendingSelection else { return }
+        #if os(iOS)
+        UIPasteboard.general.string = selection.text
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(selection.text, forType: .string)
+        #endif
+        pendingSelection = nil
+    }
+
+    private func lookUpDictionary() {
+        guard let selection = pendingSelection else { return }
+        let term = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return }
+        #if os(iOS)
+        dictionaryTerm = term
+        showDictionary = true
+        #elseif os(macOS)
+        if let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+           let url = URL(string: "dict://\(encoded)") {
+            NSWorkspace.shared.open(url)
+        }
+        pendingSelection = nil
+        #endif
     }
 
     private func selectionButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -1233,7 +1312,7 @@ struct ReadingView: View {
         try? modelContext.save()
     }
 
-    private func saveHighlight() {
+    private func saveHighlight(color: HighlightColor = .yellow) {
         guard let selection = pendingSelection else { return }
         do {
             try HighlightStore(modelContext: modelContext).createHighlight(
@@ -1241,7 +1320,8 @@ struct ReadingView: View {
                 chapterIndex: currentChapterIndex,
                 selection: selection.text,
                 prefix: selection.prefix,
-                suffix: selection.suffix
+                suffix: selection.suffix,
+                color: color
             )
             pendingSelection = nil
             refreshChapterHighlights()
@@ -1259,7 +1339,8 @@ struct ReadingView: View {
                         id: $0.id.uuidString,
                         text: $0.textSnapshot,
                         startUTF16: $0.startUTF16,
-                        endUTF16: $0.endUTF16
+                        endUTF16: $0.endUTF16,
+                        colorHex: $0.color.hex
                     )
                 }
         } catch {
@@ -1524,7 +1605,8 @@ struct ReadingSettingsView: View {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(
-                                    choice == .night ? Color(hex: 0xEDE5D4) : Color(hex: 0x2A2419)
+                                    choice.isDarkCanvas(baseIsDark: false)
+                                        ? Color(hex: 0xEDE5D4) : Color(hex: 0x2A2419)
                                 )
                         }
                     }
@@ -1549,3 +1631,19 @@ struct ReadingSettingsView: View {
         }
     }
 }
+
+#if os(iOS)
+/// System dictionary lookup (词典) for the selection bar.
+private struct DictionaryLookupView: UIViewControllerRepresentable {
+    let term: String
+
+    func makeUIViewController(context: Context) -> UIReferenceLibraryViewController {
+        UIReferenceLibraryViewController(term: term)
+    }
+
+    func updateUIViewController(
+        _ controller: UIReferenceLibraryViewController,
+        context: Context
+    ) {}
+}
+#endif

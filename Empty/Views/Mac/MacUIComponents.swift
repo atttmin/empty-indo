@@ -67,33 +67,59 @@ struct MacSegmentedPills<Option: Hashable>: View {
 
 // MARK: - Selection popover
 
+/// 划词菜单 per the P0 spec: non-AI actions lead — three marker dots,
+/// 复制 / 词典 / 跨段 — and the AI verbs live behind the trailing 朱 ›
+/// group so the everyday menu stays quiet.
 struct MacSelectionPopover: View {
     var onExplain: () -> Void
     var onTranslate: () -> Void
     var onAsk: () -> Void
     var onExpandSelection: () -> Void
-    var onHighlight: () -> Void
+    var onHighlight: (HighlightColor) -> Void
+    var onCopy: () -> Void
+    var onDictionary: () -> Void
     var onVocab: () -> Void
     var isLoading: Bool
 
     @Environment(\.emptyPalette) private var palette
+    @State private var zhuOpen = false
 
     var body: some View {
         HStack(spacing: 2) {
-            popButton("解释", action: onExplain)
-            popButton("翻译", action: onTranslate)
-            Button(action: onAsk) {
-                Text("追问 ↩")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(palette.onAccent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(palette.accent, in: RoundedRectangle(cornerRadius: 8))
+            ForEach(HighlightColor.readerChoices, id: \.self) { color in
+                colorDot(color)
             }
-            .buttonStyle(.plain)
+            divider
+            popButton("复制", action: onCopy)
+            popButton("词典", action: onDictionary)
             popButton("跨段", action: onExpandSelection)
-            popButton("高亮", action: onHighlight)
-            popButton("生词", action: onVocab)
+            divider
+            if zhuOpen {
+                popButton("解释", action: onExplain)
+                popButton("翻译", action: onTranslate)
+                popButton("生词", action: onVocab)
+                Button(action: onAsk) {
+                    Text("追问 ↩")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(palette.onAccent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(palette.accent, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { zhuOpen = true }
+                } label: {
+                    Text("朱 ›")
+                        .font(.system(size: 12.5, weight: .bold, design: .serif))
+                        .foregroundStyle(Color(hex: 0xD86B47))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
             if isLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -103,6 +129,28 @@ struct MacSelectionPopover: View {
         .padding(6)
         .background(palette.ink, in: RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.3), radius: 16, y: 8)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.16))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 3)
+    }
+
+    private func colorDot(_ color: HighlightColor) -> some View {
+        Button {
+            onHighlight(color)
+        } label: {
+            Circle()
+                .fill(Color(hex: color.hex))
+                .frame(width: 15, height: 15)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+                .padding(5)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("高亮（\(color.title)）")
     }
 
     private func popButton(_ title: String, action: @escaping () -> Void) -> some View {

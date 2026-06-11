@@ -397,15 +397,16 @@ struct NativeChapterReaderView: View {
         onSelectionChange(selection)
     }
 
-    private func localHighlightRanges(for block: NativeChapterBlock) -> [Range<Int>] {
-        var localRanges: [Range<Int>] = []
+    private func localHighlightRanges(for block: NativeChapterBlock) -> [NativeHighlightRange] {
+        var localRanges: [NativeHighlightRange] = []
         if let span = blockSpans[block.id] {
             for highlight in highlights {
+                let color = highlight.colorHex ?? HighlightColor.yellow.hex
                 if let start = highlight.startUTF16,
                    let end = highlight.endUTF16,
                    end > start,
                    let local = span.localRange(intersecting: start..<end) {
-                    localRanges.append(local)
+                    localRanges.append(NativeHighlightRange(range: local, colorHex: color))
                     continue
                 }
                 let needle = highlight.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -413,10 +414,10 @@ struct NativeChapterReaderView: View {
                       let fallback = PlainTextSearch.utf16Range(of: needle, in: block.text) else {
                     continue
                 }
-                localRanges.append(fallback)
+                localRanges.append(NativeHighlightRange(range: fallback, colorHex: color))
             }
         }
-        return mergeRanges(localRanges)
+        return localRanges
     }
 
     @ViewBuilder
@@ -553,25 +554,6 @@ struct NativeChapterReaderView: View {
             return basePath.appendingPathComponent(String(cleaned.dropFirst()))
         }
         return chapterDirectory.appendingPathComponent(cleaned)
-    }
-
-    private func mergeRanges(_ ranges: [Range<Int>]) -> [Range<Int>] {
-        let sorted = ranges.sorted {
-            if $0.lowerBound != $1.lowerBound {
-                return $0.lowerBound < $1.lowerBound
-            }
-            return $0.upperBound < $1.upperBound
-        }
-        var merged: [Range<Int>] = []
-        for range in sorted {
-            guard !range.isEmpty else { continue }
-            if let last = merged.last, range.lowerBound <= last.upperBound {
-                merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
-            } else {
-                merged.append(range)
-            }
-        }
-        return merged
     }
 
     private func headingSize(_ level: Int) -> Double {

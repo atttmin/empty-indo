@@ -456,13 +456,13 @@ private struct PageComposer {
     }
 
     private func paintHighlights(on attributed: NSMutableAttributedString, runs: [PagedRun]) {
-        let gold = PagedColor(hex: 0xDEB248).withAlphaComponent(
-            appearance.theme.isDarkCanvas(baseIsDark: isDarkCanvas) ? 0.28 : 0.4
-        )
+        let darkCanvas = appearance.theme.isDarkCanvas(baseIsDark: isDarkCanvas)
         for highlight in highlights {
             guard let start = highlight.startUTF16,
                   let end = highlight.endUTF16,
                   end > start else { continue }
+            let tint = PagedColor(hex: highlight.colorHex ?? HighlightColor.yellow.hex)
+                .withAlphaComponent(darkCanvas ? 0.66 : 0.82)
             for run in runs {
                 guard let chapterRange = run.chapterRange,
                       let local = NativeTextBlockSpan(
@@ -474,11 +474,14 @@ private struct PageComposer {
                 let lower = min(local.lowerBound, runTextLength)
                 let upper = min(local.upperBound, runTextLength)
                 guard upper > lower else { continue }
+                let range = NSRange(location: run.textLocation + lower, length: upper - lower)
+                // 底线染色 per the visual-polish spec, never a block.
                 attributed.addAttribute(
-                    .backgroundColor,
-                    value: gold,
-                    range: NSRange(location: run.textLocation + lower, length: upper - lower)
+                    .underlineStyle,
+                    value: NSUnderlineStyle.thick.rawValue,
+                    range: range
                 )
+                attributed.addAttribute(.underlineColor, value: tint, range: range)
             }
         }
     }

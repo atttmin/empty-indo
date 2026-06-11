@@ -23,9 +23,21 @@ nonisolated enum NativeTextTone: Equatable {
     case secondary
 }
 
+/// One highlight's footprint inside a text block, with its marker tint.
+nonisolated struct NativeHighlightRange: Equatable {
+    var range: Range<Int>
+    var colorHex: UInt32
+
+    init(range: Range<Int>, colorHex: UInt32 = 0xE5C55E) {
+        self.range = range
+        self.colorHex = colorHex
+    }
+}
+
 private nonisolated struct NativeHighlightSegment: Equatable {
     var startUTF16: Int
     var endUTF16: Int
+    var colorHex: UInt32
 }
 
 private nonisolated struct NativeTextSelectionRequest: Equatable {
@@ -54,7 +66,7 @@ struct NativeSelectableTextBlockView: View {
     let lineSpacing: CGFloat
     let weight: NativeTextWeight
     let tone: NativeTextTone
-    let highlightRanges: [Range<Int>]
+    let highlightRanges: [NativeHighlightRange]
     let isDark: Bool
     var monospaced: Bool = false
     var fontFamily: String? = nil
@@ -82,8 +94,9 @@ struct NativeSelectableTextBlockView: View {
                 inkSecondaryHex: inkSecondaryHex,
                 highlightSegments: highlightRanges.map {
                     NativeHighlightSegment(
-                        startUTF16: $0.lowerBound,
-                        endUTF16: $0.upperBound
+                        startUTF16: $0.range.lowerBound,
+                        endUTF16: $0.range.upperBound,
+                        colorHex: $0.colorHex
                     )
                 }
             ),
@@ -115,15 +128,25 @@ private func makeAttributedText(from model: NativeTextRenderModel) -> NSAttribut
     ]
     let attributed = NSMutableAttributedString(string: model.text, attributes: attributes)
     let textLength = model.text.utf16.count
-    let highlight = nativeHighlightColor(isDark: model.isDark)
     for segment in model.highlightSegments {
         let clampedStart = max(0, min(segment.startUTF16, textLength))
         let clampedEnd = max(clampedStart, min(segment.endUTF16, textLength))
         guard clampedEnd > clampedStart else { continue }
+        let range = NSRange(location: clampedStart, length: clampedEnd - clampedStart)
+        // 视觉精修: highlights are an underline wash (底线染色), not a
+        // block of background — the text face stays uninterrupted.
         attributed.addAttribute(
-            .backgroundColor,
-            value: highlight,
-            range: NSRange(location: clampedStart, length: clampedEnd - clampedStart)
+            .underlineStyle,
+            value: NSUnderlineStyle.thick.rawValue,
+            range: range
+        )
+        attributed.addAttribute(
+            .underlineColor,
+            value: NativePlatformColor(
+                hex: segment.colorHex,
+                alpha: model.isDark ? 0.66 : 0.82
+            ),
+            range: range
         )
     }
     return attributed
@@ -138,10 +161,6 @@ private func nativeTextColor(model: NativeTextRenderModel) -> NativePlatformColo
         if let hex = model.inkSecondaryHex { return NativePlatformColor(hex: hex) }
         return NativePlatformColor(hex: model.isDark ? 0xC4B9A4 : 0x5C5443)
     }
-}
-
-private func nativeHighlightColor(isDark: Bool) -> NativePlatformColor {
-    NativePlatformColor(hex: 0xDEB248, alpha: isDark ? 0.28 : 0.4)
 }
 
 #if canImport(UIKit)

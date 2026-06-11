@@ -58,11 +58,11 @@ nonisolated struct EmptyPalette: Equatable {
         ink3: Color(hex: 0x988E7D),
         line: Color(hex: 0xE3DACA),
         line2: Color(hex: 0xD8CEBB),
-        accent: Color(hex: 0xB5482A),
-        accentSoft: Color(hex: 0xB5482A, opacity: 0.08),
-        accentSoft2: Color(hex: 0xB5482A, opacity: 0.16),
+        accent: Color(hex: 0xA93E22),
+        accentSoft: Color(hex: 0xA93E22, opacity: 0.08),
+        accentSoft2: Color(hex: 0xA93E22, opacity: 0.16),
         onAccent: Color(hex: 0xFFF6EC),
-        highlight: Color(hex: 0xDEB248, opacity: 0.4),
+        highlight: Color(hex: 0xE5C55E, opacity: 0.45),
         shadow: Color(hex: 0x1F1B16, opacity: 0.12)
     )
 
@@ -80,7 +80,7 @@ nonisolated struct EmptyPalette: Equatable {
         accentSoft: Color(hex: 0xD86B47, opacity: 0.12),
         accentSoft2: Color(hex: 0xD86B47, opacity: 0.22),
         onAccent: Color(hex: 0xFFF6EC),
-        highlight: Color(hex: 0xDEB248, opacity: 0.28),
+        highlight: Color(hex: 0xE5C55E, opacity: 0.3),
         shadow: Color(hex: 0x000000, opacity: 0.45)
     )
 }

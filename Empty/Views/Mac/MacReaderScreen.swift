@@ -79,6 +79,8 @@ struct MacReaderScreen: View {
     @State private var inlineInFlight: Set<String> = []
     @State private var inlineAIUnavailable = false
     @State private var isTocOpen = false
+    @State private var chromeHidden = false
+    @State private var chromeTimer: Task<Void, Never>?
     /// Per-chapter pre-translation activity for the TOC chips.
     @State private var pretransProgress: [Int: MacChapterTransStatus] = [:]
     /// Translated chapter titles for the bilingual TOC (kind `.title`).
@@ -165,11 +167,33 @@ struct MacReaderScreen: View {
         }
     }
 
+    /// 沉浸态: the mouse resting ~2.5s fades the reader chrome out;
+    /// any movement brings it back, and open overlays pin it visible.
+    private var immersionBlocked: Bool {
+        showSettings || showChapterList || showRecap || showHighlights
+            || showChapterSelection || isCompanionOpen || isTocOpen
+            || pendingSelection != nil || marginNote != nil || glossEntry != nil
+    }
+
+    private func wakeChrome() {
+        if chromeHidden {
+            withAnimation(.easeInOut(duration: 0.25)) { chromeHidden = false }
+        }
+        chromeTimer?.cancel()
+        chromeTimer = Task {
+            try? await Task.sleep(for: .milliseconds(2500))
+            guard !Task.isCancelled, !immersionBlocked else { return }
+            withAnimation(.easeInOut(duration: 0.4)) { chromeHidden = true }
+        }
+    }
+
     @ViewBuilder
     private func readerContent(_ epub: EPUBBook) -> some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 topBar(epub)
+                    .opacity(chromeHidden ? 0 : 1)
+                    .allowsHitTesting(!chromeHidden)
                 Rectangle().fill(palette.line).frame(height: 1)
 
                 if summaryOpen {
@@ -301,6 +325,8 @@ struct MacReaderScreen: View {
                         .environment(\.emptyPalette, readerTheme.palette(base: palette))
                         Rectangle().fill(palette.line).frame(height: 1)
                         bottomBar(epub)
+                            .opacity(chromeHidden ? 0 : 1)
+                            .allowsHitTesting(!chromeHidden)
                     }
 
                     if isCompanionOpen {
@@ -392,8 +418,24 @@ struct MacReaderScreen: View {
         .onChange(of: showHighlights) { _, isShowing in
             if !isShowing { refreshChapterHighlights() }
         }
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            if case .active = phase {
+                wakeChrome()
+            }
+        }
+        .onChange(of: immersionBlocked) { _, blocked in
+            if blocked {
+                chromeTimer?.cancel()
+                if chromeHidden {
+                    withAnimation(.easeInOut(duration: 0.25)) { chromeHidden = false }
+                }
+            } else {
+                wakeChrome()
+            }
+        }
         .onDisappear {
             pretransTask?.cancel()
+            chromeTimer?.cancel()
         }
     }
 
@@ -788,7 +830,9 @@ struct MacReaderScreen: View {
                     onTranslate: { runSelectionAction(.translate) },
                     onAsk: { runSelectionAction(.ask) },
                     onExpandSelection: { showChapterSelection = true },
-                    onHighlight: saveHighlight,
+                    onHighlight: { saveHighlight(color: $0) },
+                    onCopy: copySelection,
+                    onDictionary: lookUpSelectionInDictionary,
                     onVocab: { runSelectionAction(.vocab) },
                     isLoading: isSelectionWorking
                 )
@@ -1633,7 +1677,7 @@ struct MacReaderScreen: View {
         refreshChapterHighlights()
     }
 
-    private func saveHighlight() {
+    private func saveHighlight(color: HighlightColor = .yellow) {
         guard let selection = pendingSelection else { return }
         do {
             try HighlightStore(modelContext: modelContext).createHighlight(
@@ -1641,13 +1685,31 @@ struct MacReaderScreen: View {
                 chapterIndex: currentChapterIndex,
                 selection: selection.text,
                 prefix: selection.prefix,
-                suffix: selection.suffix
+                suffix: selection.suffix,
+                color: color
             )
             pendingSelection = nil
             refreshChapterHighlights()
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    private func copySelection() {
+        guard let selection = pendingSelection else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(selection.text, forType: .string)
+        pendingSelection = nil
+    }
+
+    private func lookUpSelectionInDictionary() {
+        guard let selection = pendingSelection else { return }
+        let term = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty,
+              let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "dict://\(encoded)") else { return }
+        NSWorkspace.shared.open(url)
+        pendingSelection = nil
     }
 
     private func refreshChapterHighlights() {
@@ -1659,7 +1721,8 @@ struct MacReaderScreen: View {
                         id: $0.id.uuidString,
                         text: $0.textSnapshot,
                         startUTF16: $0.startUTF16,
-                        endUTF16: $0.endUTF16
+                        endUTF16: $0.endUTF16,
+                        colorHex: $0.color.hex
                     )
                 }
         } catch {

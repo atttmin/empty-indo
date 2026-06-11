@@ -138,36 +138,23 @@ struct NativeChapterSelectionSheet: View {
         .background(palette.side)
     }
 
-    private func chapterHighlightRanges() -> [Range<Int>] {
-        let ranges = highlights.compactMap { highlight -> Range<Int>? in
+    private func chapterHighlightRanges() -> [NativeHighlightRange] {
+        highlights.compactMap { highlight -> NativeHighlightRange? in
+            let color = highlight.colorHex ?? HighlightColor.yellow.hex
             if let start = highlight.startUTF16,
                let end = highlight.endUTF16,
                end > start {
-                return start..<min(end, chapterText.utf16.count)
+                return NativeHighlightRange(
+                    range: start..<min(end, chapterText.utf16.count),
+                    colorHex: color
+                )
             }
             let needle = highlight.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !needle.isEmpty else { return nil }
-            return PlainTextSearch.utf16Range(of: needle, in: chapterText)
-        }
-        return mergeRanges(ranges)
-    }
-
-    private func mergeRanges(_ ranges: [Range<Int>]) -> [Range<Int>] {
-        let sorted = ranges.sorted {
-            if $0.lowerBound != $1.lowerBound {
-                return $0.lowerBound < $1.lowerBound
+            guard !needle.isEmpty,
+                  let range = PlainTextSearch.utf16Range(of: needle, in: chapterText) else {
+                return nil
             }
-            return $0.upperBound < $1.upperBound
+            return NativeHighlightRange(range: range, colorHex: color)
         }
-        var merged: [Range<Int>] = []
-        for range in sorted {
-            guard !range.isEmpty else { continue }
-            if let last = merged.last, range.lowerBound <= last.upperBound {
-                merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
-            } else {
-                merged.append(range)
-            }
-        }
-        return merged
     }
 }

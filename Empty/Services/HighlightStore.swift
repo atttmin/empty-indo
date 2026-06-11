@@ -23,7 +23,8 @@ struct HighlightStore {
         chapterIndex: Int,
         selection: String,
         prefix: String = "",
-        suffix: String = ""
+        suffix: String = "",
+        color: HighlightColor = .yellow
     ) throws -> Highlight {
         let bookID = book.id
         let chapter = try modelContext.fetch(
@@ -49,7 +50,8 @@ struct HighlightStore {
                 startUTF16: range.lowerBound,
                 endUTF16: range.upperBound
             ),
-            textSnapshot: selection.trimmingCharacters(in: .whitespacesAndNewlines)
+            textSnapshot: selection.trimmingCharacters(in: .whitespacesAndNewlines),
+            color: color
         )
         modelContext.insert(highlight)
         highlight.book = book

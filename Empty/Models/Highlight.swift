@@ -7,12 +7,43 @@ import Foundation
 import SwiftData
 
 /// Marker colors. Raw values are stable storage identifiers; rendering
-/// decides the actual appearance per platform and theme.
+/// decides the actual appearance per platform and theme. The reader UI
+/// offers the design system's trio — 金 (yellow) / 朱 (vermilion) /
+/// 青 (celadon); the other cases are legacy storage values that still
+/// render.
 nonisolated enum HighlightColor: String, Codable, CaseIterable, Sendable {
     case yellow
     case green
     case blue
     case pink
+    case vermilion
+    case celadon
+
+    /// The picker trio, in design order.
+    static let readerChoices: [HighlightColor] = [.yellow, .vermilion, .celadon]
+
+    var title: String {
+        switch self {
+        case .yellow: "金"
+        case .vermilion: "朱"
+        case .celadon: "青"
+        case .green: "绿"
+        case .blue: "蓝"
+        case .pink: "粉"
+        }
+    }
+
+    /// Underline tint (高亮改为底线染色，不再整块涂底).
+    var hex: UInt32 {
+        switch self {
+        case .yellow: 0xE5C55E
+        case .vermilion: 0xC0532F
+        case .celadon: 0x5E8C7B
+        case .green: 0x6FA56F
+        case .blue: 0x5B85A8
+        case .pink: 0xC97A8E
+        }
+    }
 }
 
 /// A reader-created highlight with an optional note, anchored to book text.
