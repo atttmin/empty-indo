@@ -30,4 +30,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iOS lacks vocab/notes screens (Mac-only)
 - One failing test: `SemanticScorerTests.testRetrieverFallsBackToLexical`
 
-[1.0.0]: https://github.com/<你的用户名>/Empty/releases/tag/v1.0.0
+[1.0.0]: https://github.com/DaviRain-Su/empty/releases/tag/v1.0.0
