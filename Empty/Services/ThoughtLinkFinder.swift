@@ -8,20 +8,23 @@ import SwiftData
 
 /// A cross-library connection surfaced while reading — ReaderMemory first,
 /// raw highlight semantic/lexical fallback, AI theme/why on demand.
-nonisolated struct ThoughtLink: Equatable, Sendable {
+nonisolated struct ThoughtLink: Equatable, Sendable, Identifiable {
     var currentText: String
     var currentSource: String
     var relatedText: String
     var relatedSource: String
     var relatedBookTitle: String
-    /// Stable identity of the related highlight (negative feedback).
+    /// Nil when the link came from a saved card / derived memory rather than
+    /// a live highlight.
     var relatedHighlightID: UUID?
-    /// Short theme label ("不争之争") once the LLM has reviewed the pair.
     var theme: String?
     var explanation: String
-}
 
-/// 活思维链接 negative feedback: pairs the reader marked 不相关 never
+    var id: String {
+        [currentSource, relatedSource, String(relatedText.prefix(64)), theme ?? ""]
+            .joined(separator: "|")
+    }
+}
 /// resurface, and a highlight dismissed twice stops being recalled.
 nonisolated enum ThoughtLinkFeedback {
     private static let key = "thoughtlink.dismissed.v1"
@@ -71,28 +74,60 @@ struct ThoughtLinkFinder {
     private static let semanticThreshold = 0.45
     private static let lexicalThreshold = 0.15
 
-    func findLink(
+    func findLinks(
         passage: String,
         book: Book,
-        chapterIndex: Int
-    ) throws -> ThoughtLink? {
+        chapterIndex: Int,
+        limit: Int = 3
+    ) throws -> [ThoughtLink] {
+        guard limit > 0 else { return [] }
+        let currentSource = "\(book.title) · 第 \(chapterIndex + 1) 章"
         let query = SemanticScorer.queryVector(for: passage)
-        if let memoryLink = try findMemoryLink(
+
+        var links: [ThoughtLink] = []
+        var seenIDs: Set<String> = []
+
+        for link in try findMemoryLinks(
             passage: passage,
+            currentSource: currentSource,
             book: book,
-            chapterIndex: chapterIndex
-        ) {
-            return memoryLink
+            chapterIndex: chapterIndex,
+            limit: limit
+        ) where seenIDs.insert(link.id).inserted {
+            links.append(link)
         }
 
+        guard links.count < limit else { return links }
+
+        for link in try findHighlightLinks(
+            passage: passage,
+            currentSource: currentSource,
+            book: book,
+            chapterIndex: chapterIndex,
+            query: query,
+            limit: limit - links.count
+        ) where seenIDs.insert(link.id).inserted {
+            links.append(link)
+        }
+
+        return links
+    }
+
+    private func findHighlightLinks(
+        passage: String,
+        currentSource: String,
+        book: Book,
+        chapterIndex: Int,
+        query: SemanticScorer.EmbeddedQuery?,
+        limit: Int
+    ) throws -> [ThoughtLink] {
         let highlights = try modelContext.fetch(
             FetchDescriptor<Highlight>(
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
         )
 
-        var bestScore = 0.0
-        var best: Highlight?
+        var candidates: [(link: ThoughtLink, score: Double)] = []
         for highlight in highlights {
             guard let highlightBook = highlight.book else { continue }
             guard highlightBook.id != book.id
@@ -120,43 +155,54 @@ struct ThoughtLinkFinder {
                     score = lexical
                 }
             }
-            if score > bestScore {
-                bestScore = score
-                best = highlight
-            }
-        }
-        guard let best else { return nil }
+            guard score > 0 else { continue }
 
-        let relatedBook = best.book?.title ?? "另一本书"
-        let relatedSource = "\(relatedBook) · 第 \(best.chapterIndex + 1) 章"
-        let currentSource = "\(book.title) · 第 \(chapterIndex + 1) 章"
-        return ThoughtLink(
-            currentText: String(passage.prefix(160)),
-            currentSource: currentSource,
-            relatedText: best.textSnapshot,
-            relatedSource: relatedSource,
-            relatedBookTitle: relatedBook,
-            relatedHighlightID: best.id,
-            theme: nil,
-            explanation: "两段文字在主题上相呼应。点开看朱批的解读。"
-        )
+            let relatedBook = highlight.book?.title ?? "另一本书"
+            let relatedSource = "\(relatedBook) · 第 \(highlight.chapterIndex + 1) 章"
+            candidates.append((
+                ThoughtLink(
+                    currentText: String(passage.prefix(160)),
+                    currentSource: currentSource,
+                    relatedText: highlight.textSnapshot,
+                    relatedSource: relatedSource,
+                    relatedBookTitle: relatedBook,
+                    relatedHighlightID: highlight.id,
+                    theme: nil,
+                    explanation: "两段文字在主题上相呼应。点开看朱批的解读。"
+                ),
+                score
+            ))
+        }
+
+        return candidates
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.link.relatedSource < rhs.link.relatedSource
+                }
+                return lhs.score > rhs.score
+            }
+            .prefix(limit)
+            .map(\.link)
     }
 
-    private func findMemoryLink(
+    private func findMemoryLinks(
         passage: String,
+        currentSource: String,
         book: Book,
-        chapterIndex: Int
-    ) throws -> ThoughtLink? {
+        chapterIndex: Int,
+        limit: Int
+    ) throws -> [ThoughtLink] {
         let memory = ReaderMemory(modelContext: modelContext)
         try memory.syncFromReaderData()
-        let hits = try memory.recall(query: passage, limit: 5)
-        guard !hits.isEmpty else { return nil }
+        let hits = try memory.recall(query: passage, limit: max(limit * 2, 6))
+        guard !hits.isEmpty else { return [] }
 
         let items = try modelContext.fetch(FetchDescriptor<MemoryItem>())
         var byID: [UUID: MemoryItem] = [:]
         byID.reserveCapacity(items.count)
         for item in items { byID[item.id] = item }
 
+        var links: [ThoughtLink] = []
         for hit in hits {
             guard let item = byID[hit.itemID] else { continue }
             if item.bookID == book.id {
@@ -171,18 +217,19 @@ struct ThoughtLinkFinder {
                ThoughtLinkFeedback.isBlocked(passage: passage, highlightID: highlightID) {
                 continue
             }
-            return ThoughtLink(
+            links.append(ThoughtLink(
                 currentText: String(passage.prefix(160)),
-                currentSource: "\(book.title) · 第 \(chapterIndex + 1) 章",
+                currentSource: currentSource,
                 relatedText: item.body,
                 relatedSource: item.sourceLabel ?? item.kind.title,
                 relatedBookTitle: relatedBookTitle(for: item),
                 relatedHighlightID: item.sourceRefKind == "highlight" ? item.sourceRefID : nil,
                 theme: item.kind == .theme ? item.title : nil,
                 explanation: "读者记忆中的「\(item.kind.title)」与这段文字相呼应。\(item.body.prefix(180))"
-            )
+            ))
+            if links.count == limit { break }
         }
-        return nil
+        return links
     }
 
     private func relatedBookTitle(for item: MemoryItem) -> String {
@@ -212,6 +259,19 @@ struct ThoughtLinkFinder {
             ]
         )
         return Self.parseInsight(answer.text)
+    }
+
+    func enrichLinks(_ links: [ThoughtLink]) async -> [ThoughtLink] {
+        var enriched: [ThoughtLink] = []
+        enriched.reserveCapacity(links.count)
+        for var link in links {
+            if let insight = try? await linkInsight(link) {
+                link.theme = insight.theme
+                link.explanation = insight.why
+            }
+            enriched.append(link)
+        }
+        return enriched
     }
 
     nonisolated static func parseInsight(_ text: String) -> (theme: String?, why: String) {

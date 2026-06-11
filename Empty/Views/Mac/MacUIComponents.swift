@@ -349,7 +349,7 @@ struct MacThoughtLinkCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Button(action: onToggle) {
                 HStack(spacing: 8) {
-                    Text("⟲ 思维链接 · 这段与你的一条高亮相连")
+                    Text("⟲ 思维链接 · 这段与你的一条回声相连")
                         .font(.system(size: 12, weight: .semibold))
                     if let theme = link.theme {
                         Text(theme)

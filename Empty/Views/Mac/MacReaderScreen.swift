@@ -72,9 +72,9 @@ struct MacReaderScreen: View {
     @State private var marginNoteSaved = false
     @State private var glossEntry: VocabEntry?
     @State private var isSelectionWorking = false
-    @State private var thoughtLink: ThoughtLink?
-    @State private var thoughtLinkExpanded = false
-    @State private var thoughtLinkSaved = false
+    @State private var thoughtLinks: [ThoughtLink] = []
+    @State private var expandedThoughtLinkIDs: Set<String> = []
+    @State private var savedThoughtLinkIDs: Set<String> = []
     @State private var chapterOutline: ChapterOutline?
     @State private var chapterPageInfo: (page: Int, count: Int)?
     @State private var inlineNotes: [InlineNotePaint] = []
@@ -867,17 +867,21 @@ struct MacReaderScreen: View {
                     .padding(.horizontal, 24)
             }
 
-            if let thoughtLink {
-                MacThoughtLinkCard(
-                    link: thoughtLink,
-                    isExpanded: thoughtLinkExpanded,
-                    isSaved: thoughtLinkSaved,
-                    onToggle: { thoughtLinkExpanded.toggle() },
-                    onOpenNotes: onOpenNotes,
-                    onSaveLink: saveThoughtLinkCard,
-                    onAsk: { askAboutSelection(thoughtLink.explanation) },
-                    onDismiss: { dismissThoughtLink(thoughtLink) }
-                )
+            if !thoughtLinks.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(thoughtLinks) { link in
+                        MacThoughtLinkCard(
+                            link: link,
+                            isExpanded: expandedThoughtLinkIDs.contains(link.id),
+                            isSaved: savedThoughtLinkIDs.contains(link.id),
+                            onToggle: { toggleThoughtLink(link) },
+                            onOpenNotes: onOpenNotes,
+                            onSaveLink: { saveThoughtLinkCard(link) },
+                            onAsk: { askAboutSelection(link.explanation) },
+                            onDismiss: { dismissThoughtLink(link) }
+                        )
+                    }
+                }
             }
 
             if pendingSelection != nil {
@@ -1244,9 +1248,9 @@ struct MacReaderScreen: View {
         chapterOutline = nil
         chapterPageInfo = nil
         modeGuideText = ""
-        thoughtLink = nil
-        thoughtLinkExpanded = false
-        thoughtLinkSaved = false
+        thoughtLinks = []
+        expandedThoughtLinkIDs.removeAll()
+        savedThoughtLinkIDs.removeAll()
         marginNote = nil
         marginNoteSubject = nil
         marginNoteSaved = false
@@ -1611,18 +1615,18 @@ struct MacReaderScreen: View {
     }
 
     /// 思维链接 → 链接卡 in the notes screen.
-    private func saveThoughtLinkCard() {
-        guard let thoughtLink, !thoughtLinkSaved else { return }
+    private func saveThoughtLinkCard(_ link: ThoughtLink) {
+        guard !savedThoughtLinkIDs.contains(link.id) else { return }
         let card = StudyCardEntry(
-            question: "「\(thoughtLink.currentText.prefix(60))」 ⟷ 「\(thoughtLink.relatedText.prefix(60))」",
-            answer: thoughtLink.explanation,
-            source: "\(thoughtLink.currentSource) ⟷ \(thoughtLink.relatedSource)",
+            question: "「\(link.currentText.prefix(60))」 ⟷ 「\(link.relatedText.prefix(60))」",
+            answer: link.explanation,
+            source: "\(link.currentSource) ⟷ \(link.relatedSource)",
             kind: .link
         )
         card.book = book
         modelContext.insert(card)
         try? modelContext.save()
-        thoughtLinkSaved = true
+        savedThoughtLinkIDs.insert(link.id)
     }
 
     private func loadModeGuide() async {
@@ -1657,33 +1661,39 @@ struct MacReaderScreen: View {
         }
     }
 
+    private func toggleThoughtLink(_ link: ThoughtLink) {
+        if expandedThoughtLinkIDs.contains(link.id) {
+            expandedThoughtLinkIDs.remove(link.id)
+        } else {
+            expandedThoughtLinkIDs.insert(link.id)
+        }
+    }
+
     private func dismissThoughtLink(_ link: ThoughtLink) {
         if let highlightID = link.relatedHighlightID {
             ThoughtLinkFeedback.dismiss(
                 passage: link.currentText, highlightID: highlightID
             )
         }
-        thoughtLink = nil
-        thoughtLinkExpanded = false
+        thoughtLinks.removeAll { $0.id == link.id }
+        expandedThoughtLinkIDs.remove(link.id)
+        savedThoughtLinkIDs.remove(link.id)
     }
 
     private func detectThoughtLink(for passage: String) async {
         do {
-            if var link = try ThoughtLinkFinder(modelContext: modelContext).findLink(
+            let finder = ThoughtLinkFinder(modelContext: modelContext)
+            let links = try finder.findLinks(
                 passage: passage,
                 book: book,
-                chapterIndex: currentChapterIndex
-            ) {
-                if let insight = try? await ThoughtLinkFinder(modelContext: modelContext)
-                    .linkInsight(link) {
-                    link.theme = insight.theme
-                    link.explanation = insight.why
-                }
-                thoughtLink = link
-                thoughtLinkSaved = false
-            }
+                chapterIndex: currentChapterIndex,
+                limit: 3
+            )
+            thoughtLinks = await finder.enrichLinks(links)
+            expandedThoughtLinkIDs.removeAll()
+            savedThoughtLinkIDs.removeAll()
         } catch {
-            thoughtLink = nil
+            thoughtLinks = []
         }
     }
 

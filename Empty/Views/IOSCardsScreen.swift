@@ -200,18 +200,19 @@ struct IOSCardsScreen: View {
         }
     }
 
-    /// Lexical-only link between the two most recent highlights — no model
-    /// call, instant.
+    /// Quick cross-book echo from the latest highlight — first result only
+    /// on iPhone, full stack on reader / Mac.
     private func loadConnection() async {
         guard let latest = highlights.first, let book = latest.book else {
             connection = nil
             return
         }
-        connection = try? ThoughtLinkFinder(modelContext: modelContext).findLink(
+        connection = try? ThoughtLinkFinder(modelContext: modelContext).findLinks(
             passage: latest.textSnapshot,
             book: book,
-            chapterIndex: latest.chapterIndex
-        )
+            chapterIndex: latest.chapterIndex,
+            limit: 1
+        ).first
     }
 
     private var emptyState: some View {

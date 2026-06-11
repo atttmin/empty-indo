@@ -169,9 +169,9 @@ struct ReadingView: View {
     @State private var marginNote: String?
     @State private var marginSubject: String?
     @State private var isSelectionWorking = false
-    @State private var thoughtLink: ThoughtLink?
-    @State private var thoughtLinkExpanded = false
-    @State private var thoughtLinkSaved = false
+    @State private var thoughtLinks: [ThoughtLink] = []
+    @State private var expandedThoughtLinkIDs: Set<String> = []
+    @State private var savedThoughtLinkIDs: Set<String> = []
     @State private var chapterPageInfo: (page: Int, count: Int)?
     @State private var activityMeter = ReadingActivityMeter()
     @AppStorage("reader.aloud.autonext") private var aloudAutoNext = false
@@ -691,9 +691,13 @@ struct ReadingView: View {
                 .padding(.horizontal, 18)
             }
 
-            if let thoughtLink {
-                thoughtLinkCard(thoughtLink)
-                    .padding(.horizontal, 18)
+            if !thoughtLinks.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(thoughtLinks) { link in
+                        thoughtLinkCard(link)
+                    }
+                }
+                .padding(.horizontal, 18)
             }
 
             if pendingSelection != nil {
@@ -820,13 +824,26 @@ struct ReadingView: View {
 
     /// ⟲ 思维链接 chip and the vertical cross-book card.
     private func thoughtLinkCard(_ link: ThoughtLink) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let isExpanded = expandedThoughtLinkIDs.contains(link.id)
+        let isSaved = savedThoughtLinkIDs.contains(link.id)
+        return VStack(alignment: .leading, spacing: 8) {
             Button {
-                thoughtLinkExpanded.toggle()
+                if isExpanded {
+                    expandedThoughtLinkIDs.remove(link.id)
+                } else {
+                    expandedThoughtLinkIDs.insert(link.id)
+                }
             } label: {
                 HStack(spacing: 7) {
-                    Text("⟲ 思维链接 · 与你的一条高亮相连")
+                    Text("⟲ 思维链接 · 与你的一条回声相连")
                         .font(.system(size: 11.5, weight: .semibold))
+                    if thoughtLinks.count > 1 {
+                        Text("\(thoughtLinks.count) 条")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(palette.accentSoft2, in: Capsule())
+                    }
                     if let theme = link.theme {
                         Text(theme)
                             .font(.system(size: 10, weight: .bold))
@@ -834,7 +851,7 @@ struct ReadingView: View {
                             .padding(.vertical, 1.5)
                             .background(palette.accentSoft2, in: Capsule())
                     }
-                    Text(thoughtLinkExpanded ? "⌃" : "⌄")
+                    Text(isExpanded ? "⌃" : "⌄")
                 }
                 .foregroundStyle(palette.accent)
                 .padding(.horizontal, 13)
@@ -844,7 +861,7 @@ struct ReadingView: View {
             }
             .buttonStyle(.plain)
 
-            if thoughtLinkExpanded {
+            if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     linkPane("现在 · \(link.currentSource)", text: link.currentText, italic: true)
                     Text("⟷")
@@ -868,26 +885,19 @@ struct ReadingView: View {
                         .padding(.vertical, 6)
                         .background(palette.accent, in: Capsule())
 
-                        Button(thoughtLinkSaved ? "✓ 已存为链接卡" : "存为链接卡") {
-                            saveThoughtLinkCard()
+                        Button(isSaved ? "✓ 已存为链接卡" : "存为链接卡") {
+                            saveThoughtLinkCard(link)
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 11))
-                        .foregroundStyle(thoughtLinkSaved ? palette.accent : palette.ink2)
+                        .foregroundStyle(isSaved ? palette.accent : palette.ink2)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 6)
                         .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
-                        .disabled(thoughtLinkSaved)
+                        .disabled(isSaved)
 
                         Button("不相关") {
-                            if let highlightID = link.relatedHighlightID {
-                                ThoughtLinkFeedback.dismiss(
-                                    passage: link.currentText,
-                                    highlightID: highlightID
-                                )
-                            }
-                            thoughtLink = nil
-                            thoughtLinkExpanded = false
+                            dismissThoughtLink(link)
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 11))
@@ -1034,38 +1044,46 @@ struct ReadingView: View {
 
     private func detectThoughtLink(for passage: String) async {
         do {
-            if var link = try ThoughtLinkFinder(modelContext: modelContext).findLink(
+            let finder = ThoughtLinkFinder(modelContext: modelContext)
+            let links = try finder.findLinks(
                 passage: passage,
                 book: book,
-                chapterIndex: currentChapterIndex
-            ) {
-                if let insight = try? await ThoughtLinkFinder(modelContext: modelContext)
-                    .linkInsight(link) {
-                    link.theme = insight.theme
-                    link.explanation = insight.why
-                }
-                thoughtLink = link
-                thoughtLinkExpanded = false
-                thoughtLinkSaved = false
-            }
+                chapterIndex: currentChapterIndex,
+                limit: 3
+            )
+            thoughtLinks = await finder.enrichLinks(links)
+            expandedThoughtLinkIDs.removeAll()
+            savedThoughtLinkIDs.removeAll()
         } catch {
-            thoughtLink = nil
+            thoughtLinks = []
         }
     }
 
+    private func dismissThoughtLink(_ link: ThoughtLink) {
+        if let highlightID = link.relatedHighlightID {
+            ThoughtLinkFeedback.dismiss(
+                passage: link.currentText,
+                highlightID: highlightID
+            )
+        }
+        thoughtLinks.removeAll { $0.id == link.id }
+        expandedThoughtLinkIDs.remove(link.id)
+        savedThoughtLinkIDs.remove(link.id)
+    }
+
     /// 思维链接 → 链接卡 in the cards screen.
-    private func saveThoughtLinkCard() {
-        guard let thoughtLink, !thoughtLinkSaved else { return }
+    private func saveThoughtLinkCard(_ link: ThoughtLink) {
+        guard !savedThoughtLinkIDs.contains(link.id) else { return }
         let card = StudyCardEntry(
-            question: "「\(thoughtLink.currentText.prefix(60))」 ⟷ 「\(thoughtLink.relatedText.prefix(60))」",
-            answer: thoughtLink.explanation,
-            source: "\(thoughtLink.currentSource) ⟷ \(thoughtLink.relatedSource)",
+            question: "「\(link.currentText.prefix(60))」 ⟷ 「\(link.relatedText.prefix(60))」",
+            answer: link.explanation,
+            source: "\(link.currentSource) ⟷ \(link.relatedSource)",
             kind: .link
         )
         card.book = book
         modelContext.insert(card)
         try? modelContext.save()
-        thoughtLinkSaved = true
+        savedThoughtLinkIDs.insert(link.id)
     }
 
     private func toggleAloud() {
@@ -1100,9 +1118,9 @@ struct ReadingView: View {
         showChapterSelection = false
         marginNote = nil
         marginSubject = nil
-        thoughtLink = nil
-        thoughtLinkExpanded = false
-        thoughtLinkSaved = false
+        thoughtLinks = []
+        expandedThoughtLinkIDs.removeAll()
+        savedThoughtLinkIDs.removeAll()
         chapterPageInfo = nil
         inlineNotes = []
     }

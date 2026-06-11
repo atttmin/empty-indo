@@ -84,7 +84,7 @@ struct ReadingToolbox {
         ),
         ReadingToolSpec(
             name: "find_link",
-            summary: "Find a thematic link between a passage and the reader's earlier highlights.",
+            summary: "Find one or more thematic echoes between a passage and the reader's earlier highlights.",
             argumentHint: "the passage or idea"
         ),
         ReadingToolSpec(
@@ -214,22 +214,26 @@ struct ReadingToolbox {
         guard !passage.isEmpty else {
             return ReadingToolResult(observation: "没有可关联的内容。", traceLabel: "找关联")
         }
-        guard var link = try ThoughtLinkFinder(modelContext: modelContext).findLink(
-            passage: passage,
-            book: book,
-            chapterIndex: position.chapterIndex
-        ) else {
+        let finder = ThoughtLinkFinder(modelContext: modelContext)
+        let links = try await finder.enrichLinks(
+            finder.findLinks(
+                passage: passage,
+                book: book,
+                chapterIndex: position.chapterIndex,
+                limit: 3
+            )
+        )
+        guard !links.isEmpty else {
             return ReadingToolResult(
                 observation: "没有找到与读者既有高亮相连的内容。",
                 traceLabel: "找关联"
             )
         }
-        if let explained = try? await ThoughtLinkFinder(modelContext: modelContext)
-            .explainLink(link) {
-            link.explanation = explained
-        }
+        let summary = links.map { link in
+            "• \(link.relatedSource)：「\(link.relatedText)」\n\(link.explanation)"
+        }.joined(separator: "\n")
         return ReadingToolResult(
-            observation: "相关高亮(\(link.relatedSource)):「\(link.relatedText)」\n\(link.explanation)",
+            observation: "找到 \(links.count) 条相关回声：\n\(summary)",
             traceLabel: "找关联"
         )
     }
