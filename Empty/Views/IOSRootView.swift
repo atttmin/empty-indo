@@ -68,6 +68,20 @@ struct IOSRootView: View {
             .environment(\.emptyPalette, palette)
         }
         .task { applyLaunchOverrides() }
+        .onOpenURL(perform: handleDeepLink)
+    }
+
+    /// empty://book/<id>?c=<chapter>&o=<offset> — exported excerpts jump
+    /// back to their exact passage.
+    private func handleDeepLink(_ url: URL) {
+        guard let parsed = EmptyDeepLink.parse(url) else { return }
+        let bookID = parsed.bookID
+        guard let book = try? modelContext.fetch(
+            FetchDescriptor<Book>(predicate: #Predicate { $0.id == bookID })
+        ).first else { return }
+        book.position = parsed.position
+        try? modelContext.save()
+        open(book)
     }
 
     private func applyLaunchOverrides() {

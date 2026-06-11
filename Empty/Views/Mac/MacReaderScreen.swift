@@ -91,6 +91,7 @@ struct MacReaderScreen: View {
     @State private var activityMeter = ReadingActivityMeter()
     @AppStorage("reader.aloud.autonext") private var aloudAutoNext = false
     @AppStorage("reader.pdf.invert") private var pdfNightInverted = false
+    @AppStorage("reader.pdf.autocrop") private var pdfAutoCrop = false
     @AppStorage("reader.pdf.twoup") private var pdfTwoUp = false
     @AppStorage("reader.traditional") private var traditionalChinese = false
     @State private var traditionalCache = DictionaryBox<Int, (chapter: EPUBChapter, plain: String?)>()
@@ -538,6 +539,7 @@ struct MacReaderScreen: View {
                                     nightInverted: pdfNightInverted,
                                     zoomMemoryKey: "pdf.zoom.\(book.id.uuidString)",
                                     twoUp: pdfTwoUp,
+                                    autoCrop: pdfAutoCrop,
                                     onPageChange: syncPageProgress,
                                     onSelectionChange: { applySelection($0) }
                                 )

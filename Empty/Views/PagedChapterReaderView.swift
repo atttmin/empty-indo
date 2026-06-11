@@ -883,6 +883,10 @@ struct MacPagedChapterReaderView: View {
     private let blockSpans: [String: NativeTextBlockSpan]
 
     @Environment(\.emptyPalette) private var palette
+    /// 竖排 (Mac · 翻页 · EPUB): vertical-rl via NSTextView's native
+    /// layout orientation. Pagination measures with swapped page
+    /// dimensions and a safety factor, so it's labeled experimental.
+    @AppStorage("reader.vertical.mac") private var verticalText = false
     @State private var paginated: PaginatedChapter?
     @State private var pageIndex = 0
     @State private var composeVersion = 0
@@ -899,6 +903,7 @@ struct MacPagedChapterReaderView: View {
         var inlineMode: InlineNoteKind
         var noteFingerprint: Int
         var highlightFingerprint: Int
+        var vertical: Bool
     }
 
     init(
@@ -961,6 +966,7 @@ struct MacPagedChapterReaderView: View {
                         text: paginated.pageText(pageIndex),
                         globalLocation: paginated.characterRange(forPage: pageIndex).location,
                         pageSize: textSize,
+                        vertical: verticalText,
                         clearSelection: !selectionActive,
                         onSelectionChange: { handleSelection($0) },
                         onClickAt: { handleTap(fraction: $0) }
@@ -1062,7 +1068,8 @@ struct MacPagedChapterReaderView: View {
             },
             highlightFingerprint: highlights.reduce(0) { partial, paint in
                 partial &+ (paint.startUTF16 ?? 0) &* 31 &+ (paint.endUTF16 ?? 0)
-            }
+            },
+            vertical: verticalText
         )
     }
 
@@ -1073,6 +1080,12 @@ struct MacPagedChapterReaderView: View {
 
         let anchorOffset = paginated.flatMap { $0.chapterOffset(forPage: pageIndex) }
 
+        // Vertical pages flow in columns: measure with swapped
+        // dimensions and a safety factor against metric drift between
+        // horizontal measurement and vertical display.
+        let measureSize = verticalText
+            ? CGSize(width: textSize.height * 0.9, height: textSize.width)
+            : textSize
         let composer = PageComposer(
             document: document,
             blockSpans: blockSpans,
@@ -1086,7 +1099,7 @@ struct MacPagedChapterReaderView: View {
             inlineMode: inlineMode,
             inlineNotes: inlineNotes,
             highlights: highlights,
-            pageSize: textSize
+            pageSize: measureSize
         )
         composeVersion += 1
         let next = composer.compose(version: composeVersion)
@@ -1149,6 +1162,7 @@ private struct MacPageTextView: NSViewRepresentable {
     let text: NSAttributedString
     let globalLocation: Int
     let pageSize: CGSize
+    var vertical: Bool = false
     let clearSelection: Bool
     let onSelectionChange: (NSRange?) -> Void
     let onClickAt: (CGFloat) -> Void
@@ -1175,6 +1189,9 @@ private struct MacPageTextView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = false
         textView.delegate = context.coordinator
+        if vertical {
+            textView.setLayoutOrientation(.vertical)
+        }
         textView.textStorage?.setAttributedString(text)
 
         let click = NSClickGestureRecognizer(

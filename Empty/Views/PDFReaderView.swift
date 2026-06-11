@@ -30,6 +30,8 @@ struct PDFReaderView: View {
     var zoomMemoryKey: String? = nil
     /// 双页 spread (Mac).
     var twoUp: Bool = false
+    /// 自动裁边 (white-margin detection).
+    var autoCrop: Bool = false
     var onPageChange: (Int) -> Void = { _ in }
     var onSelectionChange: (ReaderSelection?) -> Void = { _ in }
 
@@ -40,6 +42,7 @@ struct PDFReaderView: View {
             highlights: highlights,
             zoomMemoryKey: zoomMemoryKey,
             twoUp: twoUp,
+            autoCrop: autoCrop,
             onPageChange: onPageChange,
             onSelectionChange: onSelectionChange
         )
@@ -105,6 +108,79 @@ nonisolated enum PDFSelectionContext {
     }
 }
 
+// MARK: - Auto crop (白边检测)
+
+/// Detects a page's content bounding box by scanning a small rendered
+/// thumbnail for non-background pixels, then maps it back to media-box
+/// coordinates. Cheap enough to run per displayed page.
+nonisolated enum PDFAutoCrop {
+    static func contentRect(for page: PDFPage, padding: CGFloat = 6) -> CGRect? {
+        let mediaBox = page.bounds(for: .mediaBox)
+        guard mediaBox.width > 1, mediaBox.height > 1 else { return nil }
+        let sampleWidth = 160.0
+        let scale = sampleWidth / mediaBox.width
+        let size = CGSize(width: sampleWidth, height: mediaBox.height * scale)
+        let thumbnail = page.thumbnail(of: size, for: .mediaBox)
+
+        #if canImport(UIKit)
+        guard let cgImage = thumbnail.cgImage else { return nil }
+        #else
+        var proposed = CGRect(origin: .zero, size: thumbnail.size)
+        guard let cgImage = thumbnail.cgImage(
+            forProposedRect: &proposed, context: nil, hints: nil
+        ) else { return nil }
+        #endif
+
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 4, height > 4 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Background luminance from the corners; content = pixels that
+        // differ noticeably.
+        let corners = [
+            pixels[0], pixels[width - 1],
+            pixels[(height - 1) * width], pixels[height * width - 1],
+        ]
+        let background = corners.map(Int.init).reduce(0, +) / corners.count
+
+        var minX = width, maxX = -1, minY = height, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where abs(Int(pixels[y * width + x]) - background) > 28 {
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+                if y < minY { minY = y }
+                if y > maxY { maxY = y }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        // Mostly-empty pages keep their full box.
+        let coverage = Double((maxX - minX) * (maxY - minY)) / Double(width * height)
+        guard coverage > 0.02 else { return nil }
+
+        let pixelScale = mediaBox.width / CGFloat(width)
+        // CGImage rows are top-down; PDF space is bottom-up.
+        let content = CGRect(
+            x: mediaBox.minX + CGFloat(minX) * pixelScale - padding,
+            y: mediaBox.minY + CGFloat(height - 1 - maxY) * pixelScale - padding,
+            width: CGFloat(maxX - minX + 1) * pixelScale + padding * 2,
+            height: CGFloat(maxY - minY + 1) * pixelScale + padding * 2
+        ).intersection(mediaBox)
+        guard content.width > 40, content.height > 40 else { return nil }
+        return content
+    }
+}
+
 // MARK: - Bridge
 
 final class PDFReaderCoordinator: NSObject {
@@ -112,6 +188,9 @@ final class PDFReaderCoordinator: NSObject {
     var paints: [HighlightPaint] = []
     /// 按书缩放记忆: persisted scale factor under this defaults key.
     var zoomMemoryKey: String?
+    /// 自动裁边 — crops the displayed page to its detected content box.
+    var autoCrop = false
+
     var onPageChange: (Int) -> Void = { _ in }
     var onSelectionChange: (ReaderSelection?) -> Void = { _ in }
 
@@ -119,6 +198,27 @@ final class PDFReaderCoordinator: NSObject {
     private var isApplyingPage = false
     private var selectionDebounce: DispatchWorkItem?
     private var paintedAnnotations: [PDFAnnotation] = []
+    /// Pages whose cropBox we replaced, with the original to restore.
+    private var croppedPages: [ObjectIdentifier: (page: PDFPage, original: CGRect)] = [:]
+
+    /// Applies/undoes auto-crop on the visible page.
+    func applyAutoCrop(on pdfView: PDFView) {
+        guard let page = pdfView.currentPage else { return }
+        let key = ObjectIdentifier(page)
+        if autoCrop {
+            guard croppedPages[key] == nil,
+                  let content = PDFAutoCrop.contentRect(for: page) else { return }
+            croppedPages[key] = (page, page.bounds(for: .cropBox))
+            page.setBounds(content, for: .cropBox)
+            pdfView.layoutDocumentView()
+        } else if !croppedPages.isEmpty {
+            for (_, entry) in croppedPages {
+                entry.page.setBounds(entry.original, for: .cropBox)
+            }
+            croppedPages.removeAll()
+            pdfView.layoutDocumentView()
+        }
+    }
 
     func attach(to pdfView: PDFView) {
         detach()
@@ -128,6 +228,7 @@ final class PDFReaderCoordinator: NSObject {
             queue: .main
         ) { [weak self, weak pdfView] _ in
             guard let self, let pdfView else { return }
+            self.applyAutoCrop(on: pdfView)
             self.applyHighlights(on: pdfView)
             guard !self.isApplyingPage else { return }
             guard let page = pdfView.currentPage,
@@ -263,6 +364,7 @@ struct PDFReaderRepresentable: UIViewRepresentable {
     let highlights: [HighlightPaint]
     var zoomMemoryKey: String? = nil
     var twoUp: Bool = false
+    var autoCrop: Bool = false
     let onPageChange: (Int) -> Void
     let onSelectionChange: (ReaderSelection?) -> Void
 
@@ -281,11 +383,13 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         context.coordinator.pageIndex = pageIndex
         context.coordinator.paints = highlights
         context.coordinator.zoomMemoryKey = zoomMemoryKey
+        context.coordinator.autoCrop = autoCrop
         syncCallbacks(context.coordinator)
         context.coordinator.attach(to: pdfView)
         context.coordinator.applyPage(in: pdfView, index: pageIndex)
         context.coordinator.applyHighlights(on: pdfView)
         context.coordinator.restoreZoom(in: pdfView)
+        context.coordinator.applyAutoCrop(on: pdfView)
         return pdfView
     }
 
@@ -296,6 +400,10 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         let mode: PDFDisplayMode = twoUp ? .twoUp : .singlePage
         if pdfView.displayMode != mode {
             pdfView.displayMode = mode
+        }
+        if context.coordinator.autoCrop != autoCrop {
+            context.coordinator.autoCrop = autoCrop
+            context.coordinator.applyAutoCrop(on: pdfView)
         }
         syncCallbacks(context.coordinator)
         if context.coordinator.pageIndex != pageIndex {
@@ -327,6 +435,7 @@ struct PDFReaderRepresentable: NSViewRepresentable {
     let highlights: [HighlightPaint]
     var zoomMemoryKey: String? = nil
     var twoUp: Bool = false
+    var autoCrop: Bool = false
     let onPageChange: (Int) -> Void
     let onSelectionChange: (ReaderSelection?) -> Void
 
@@ -344,11 +453,13 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.pageIndex = pageIndex
         context.coordinator.paints = highlights
         context.coordinator.zoomMemoryKey = zoomMemoryKey
+        context.coordinator.autoCrop = autoCrop
         syncCallbacks(context.coordinator)
         context.coordinator.attach(to: pdfView)
         context.coordinator.applyPage(in: pdfView, index: pageIndex)
         context.coordinator.applyHighlights(on: pdfView)
         context.coordinator.restoreZoom(in: pdfView)
+        context.coordinator.applyAutoCrop(on: pdfView)
         DispatchQueue.main.async {
             pdfView.window?.makeFirstResponder(pdfView)
         }
@@ -362,6 +473,10 @@ struct PDFReaderRepresentable: NSViewRepresentable {
         let mode: PDFDisplayMode = twoUp ? .twoUp : .singlePage
         if pdfView.displayMode != mode {
             pdfView.displayMode = mode
+        }
+        if context.coordinator.autoCrop != autoCrop {
+            context.coordinator.autoCrop = autoCrop
+            context.coordinator.applyAutoCrop(on: pdfView)
         }
         syncCallbacks(context.coordinator)
         if context.coordinator.pageIndex != pageIndex {

@@ -176,6 +176,7 @@ struct ReadingView: View {
     @State private var activityMeter = ReadingActivityMeter()
     @AppStorage("reader.aloud.autonext") private var aloudAutoNext = false
     @AppStorage("reader.pdf.invert") private var pdfNightInverted = false
+    @AppStorage("reader.pdf.autocrop") private var pdfAutoCrop = false
     @AppStorage("reader.traditional") private var traditionalChinese = false
     @State private var traditionalCache = DictionaryBox<Int, (chapter: EPUBChapter, plain: String?)>()
     @StateObject private var aloud = ReadingAloud()
@@ -468,6 +469,7 @@ struct ReadingView: View {
                         highlights: chapterHighlights,
                         nightInverted: pdfNightInverted,
                         zoomMemoryKey: "pdf.zoom.\(book.id.uuidString)",
+                        autoCrop: pdfAutoCrop,
                         onPageChange: syncPageProgress,
                         onSelectionChange: { handleSelectionChange($0) }
                     )
@@ -1618,6 +1620,8 @@ struct ReadingSettingsView: View {
     @AppStorage("reader.traditional") private var traditionalChinese = false
     @AppStorage("reader.pdf.invert") private var pdfInvert = false
     @AppStorage("reader.pdf.twoup") private var pdfTwoUp = false
+    @AppStorage("reader.pdf.autocrop") private var pdfAutoCrop = false
+    @AppStorage("reader.vertical.mac") private var verticalText = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.emptyPalette) private var palette
@@ -1698,6 +1702,10 @@ struct ReadingSettingsView: View {
                         optionChip("PDF 夜间反色", isOn: $pdfInvert)
                         #if os(macOS)
                         optionChip("PDF 双页", isOn: $pdfTwoUp)
+                        optionChip("PDF 裁边", isOn: $pdfAutoCrop)
+                        optionChip("竖排（翻页·实验）", isOn: $verticalText)
+                        #else
+                        optionChip("PDF 裁边", isOn: $pdfAutoCrop)
                         #endif
                     }
                 }
