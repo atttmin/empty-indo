@@ -140,22 +140,13 @@ nonisolated struct NativeChapterDocument: Equatable {
         let clampedUpper = max(clampedLower, min(localUTF16Range.upperBound, blockUTF16Count))
         guard clampedUpper > clampedLower else { return nil }
 
-        let localRange = clampedLower..<clampedUpper
-        let selectionText = utf16Slice(block.text, range: localRange)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !selectionText.isEmpty else { return nil }
-
         let source = textSource(prefer: chapterPlainText)
-        let absoluteLower = span.chapterRange.lowerBound + localRange.lowerBound
-        let absoluteUpper = min(span.chapterRange.lowerBound + localRange.upperBound, source.utf16.count)
+        let absoluteLower = span.chapterRange.lowerBound + clampedLower
+        let absoluteUpper = min(span.chapterRange.lowerBound + clampedUpper, source.utf16.count)
         guard absoluteUpper > absoluteLower else { return nil }
-
-        let prefixStart = max(0, absoluteLower - 180)
-        let suffixEnd = min(source.utf16.count, absoluteUpper + 180)
-        return ReaderSelection(
-            text: selectionText,
-            prefix: utf16Slice(source, range: prefixStart..<absoluteLower),
-            suffix: utf16Slice(source, range: absoluteUpper..<suffixEnd)
+        return ReaderSelectionContext.selection(
+            in: source,
+            utf16Range: absoluteLower..<absoluteUpper
         )
     }
 
@@ -177,6 +168,31 @@ nonisolated struct NativeTextBlockSpan: Equatable {
         let upper = min(chapterRange.upperBound, absoluteRange.upperBound)
         guard upper > lower else { return nil }
         return (lower - chapterRange.lowerBound)..<(upper - chapterRange.lowerBound)
+    }
+}
+
+nonisolated enum ReaderSelectionContext {
+    static func selection(
+        in source: String,
+        utf16Range: Range<Int>,
+        contextWindow: Int = 180
+    ) -> ReaderSelection? {
+        let sourceUTF16Count = source.utf16.count
+        let lower = max(0, min(utf16Range.lowerBound, sourceUTF16Count))
+        let upper = max(lower, min(utf16Range.upperBound, sourceUTF16Count))
+        guard upper > lower else { return nil }
+
+        let selectionText = utf16Slice(source, range: lower..<upper)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selectionText.isEmpty else { return nil }
+
+        let prefixStart = max(0, lower - contextWindow)
+        let suffixEnd = min(sourceUTF16Count, upper + contextWindow)
+        return ReaderSelection(
+            text: selectionText,
+            prefix: utf16Slice(source, range: prefixStart..<lower),
+            suffix: utf16Slice(source, range: upper..<suffixEnd)
+        )
     }
 }
 

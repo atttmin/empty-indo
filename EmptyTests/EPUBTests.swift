@@ -194,6 +194,24 @@ struct NativeChapterOffsetsTests {
         #expect(selection.suffix.contains("尾段"))
     }
 
+    @Test func readerSelectionContextSupportsCrossParagraphRanges() {
+        let chapterText = "Chapter\n第一段 甲乙丙。\n第二段 甲乙丙。\n尾段 收束。"
+        let selected = "甲乙丙。\n第二段 甲乙"
+
+        guard let range = PlainTextSearch.utf16Range(of: selected, in: chapterText),
+              let selection = ReaderSelectionContext.selection(
+                in: chapterText,
+                utf16Range: range
+              ) else {
+            Issue.record("Missing cross-paragraph selection")
+            return
+        }
+
+        #expect(selection.text == selected)
+        #expect(selection.prefix.contains("第一段"))
+        #expect(selection.suffix.contains("尾段"))
+    }
+
     @Test func convertsAbsoluteHighlightRangesIntoLocalRanges() {
         let span = NativeTextBlockSpan(
             blockID: "p-1",

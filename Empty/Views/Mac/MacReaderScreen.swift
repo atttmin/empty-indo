@@ -50,6 +50,7 @@ struct MacReaderScreen: View {
     @State private var lineSpacing: Double = 1.8
     @State private var pendingSelection: ReaderSelection?
     @State private var chapterHighlights: [HighlightPaint] = []
+    @State private var showChapterSelection = false
     @State private var isCompanionOpen = false
     @State private var companion: CompanionModel
     @State private var readingMode: MacReadingMode = .original
@@ -251,14 +252,7 @@ struct MacReaderScreen: View {
                                 onChapterBoundary: { direction in
                                     crossChapterBoundary(direction, chapterCount: epub.chapters.count)
                                 },
-                                onSelectionChange: { selection in
-                                    pendingSelection = selection
-                                    marginNote = nil
-                                    glossEntry = nil
-                                    if let selection {
-                                        Task { await detectThoughtLink(for: selection.text) }
-                                    }
-                                },
+                                onSelectionChange: { applySelection($0) },
                                 onPositionChange: { updateUTF16Offset(domPrefix: $0) },
                                 onVisibleParagraphs: { handleVisibleParagraphs($0) },
                                 onPageInfo: { page, count in
@@ -317,6 +311,20 @@ struct MacReaderScreen: View {
                 cache: $recapCache
             )
             .frame(minWidth: 440, minHeight: 480)
+        }
+        .sheet(isPresented: $showChapterSelection) {
+            NativeChapterSelectionSheet(
+                title: sectionTitles.indices.contains(currentChapterIndex)
+                    ? sectionTitles[currentChapterIndex]
+                    : "当前章节",
+                chapterText: currentChapterPlainText() ?? "",
+                highlights: chapterHighlights,
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                initialSelection: pendingSelection
+            ) { selection in
+                applySelection(selection)
+            }
         }
         .onChange(of: currentChapterIndex) { _, _ in
             pendingSelection = nil
@@ -410,14 +418,7 @@ struct MacReaderScreen: View {
                                     pageIndex: $currentChapterIndex,
                                     highlights: chapterHighlights,
                                     onPageChange: syncPageProgress,
-                                    onSelectionChange: { selection in
-                                        pendingSelection = selection
-                                        marginNote = nil
-                                        glossEntry = nil
-                                        if let selection {
-                                            Task { await detectThoughtLink(for: selection.text) }
-                                        }
-                                    }
+                                    onSelectionChange: { applySelection($0) }
                                 )
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -711,6 +712,7 @@ struct MacReaderScreen: View {
                     onExplain: { runSelectionAction(.explain) },
                     onTranslate: { runSelectionAction(.translate) },
                     onAsk: { runSelectionAction(.ask) },
+                    onExpandSelection: { showChapterSelection = true },
                     onHighlight: saveHighlight,
                     onVocab: { runSelectionAction(.vocab) },
                     isLoading: isSelectionWorking
@@ -1065,6 +1067,7 @@ struct MacReaderScreen: View {
         marginNoteSaved = false
         glossEntry = nil
         pendingSelection = nil
+        showChapterSelection = false
         inlineNotes = []
     }
 
@@ -1377,6 +1380,15 @@ struct MacReaderScreen: View {
             }
         } catch {
             modeGuideText = "导读暂不可用 — \(error.localizedDescription)"
+        }
+    }
+
+    private func applySelection(_ selection: ReaderSelection?) {
+        pendingSelection = selection
+        marginNote = nil
+        glossEntry = nil
+        if let selection {
+            Task { await detectThoughtLink(for: selection.text) }
         }
     }
 

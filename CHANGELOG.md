@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   views for fine-grained ranges, and stored highlights paint the exact local
   ranges instead of whole matching paragraphs
 
+- Native reader selection still stopped at paragraph boundaries because each
+  paragraph rendered as its own native text view: the selection toolbar now
+  offers a 跨段 picker that opens a chapter-wide native selection sheet, so
+  multi-paragraph excerpts can be selected and sent back through the same
+  explain / translate / highlight flow.
+
 ### Added
 
 - Two cloud standards behind the same `AIService` protocol: the existing

@@ -99,6 +99,7 @@ struct ReadingView: View {
     @State private var pendingSelection: ReaderSelection?
     @State private var chapterHighlights: [HighlightPaint] = []
     @State private var showHighlights = false
+    @State private var showChapterSelection = false
     @State private var saveErrorMessage: String?
     @State private var showControls = true
     @State private var fontSize: Double = 18
@@ -280,6 +281,20 @@ struct ReadingView: View {
             #if os(macOS)
             .frame(minWidth: 420, minHeight: 460)
             #endif
+        }
+        .sheet(isPresented: $showChapterSelection) {
+            NativeChapterSelectionSheet(
+                title: sectionTitles.indices.contains(currentChapterIndex)
+                    ? sectionTitles[currentChapterIndex]
+                    : "当前章节",
+                chapterText: currentChapterPlainText() ?? "",
+                highlights: chapterHighlights,
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                initialSelection: pendingSelection
+            ) { selection in
+                handleSelectionChange(selection)
+            }
         }
         .onChange(of: currentChapterIndex) { _, _ in
             resetChapterArtifacts()
@@ -559,6 +574,7 @@ struct ReadingView: View {
                     .background(palette.accent, in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
+            selectionButton("跨段") { showChapterSelection = true }
             selectionButton("高亮") { saveHighlight() }
             if isSelectionWorking {
                 ProgressView()
@@ -794,6 +810,7 @@ struct ReadingView: View {
 
     private func resetChapterArtifacts() {
         pendingSelection = nil
+        showChapterSelection = false
         marginNote = nil
         marginSubject = nil
         thoughtLink = nil

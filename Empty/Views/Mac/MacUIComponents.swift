@@ -71,6 +71,7 @@ struct MacSelectionPopover: View {
     var onExplain: () -> Void
     var onTranslate: () -> Void
     var onAsk: () -> Void
+    var onExpandSelection: () -> Void
     var onHighlight: () -> Void
     var onVocab: () -> Void
     var isLoading: Bool
@@ -90,6 +91,7 @@ struct MacSelectionPopover: View {
                     .background(palette.accent, in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
+            popButton("跨段", action: onExpandSelection)
             popButton("高亮", action: onHighlight)
             popButton("生词", action: onVocab)
             if isLoading {
