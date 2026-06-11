@@ -82,6 +82,43 @@ struct FullyReadTextTests {
     }
 }
 
+@MainActor
+struct CompanionReadableContextTests {
+    @Test func firstChapterPartialProgressIsReadable() throws {
+        let container = try AppStores.makeContainer(ephemeral: true)
+        let context = container.mainContext
+        let bookID = UUID()
+        context.insert(Chapter(bookID: bookID, index: 0, title: "Intro", text: "第一章已经读到这里。后面仍然保密。"))
+        try context.save()
+
+        let hasContext = try CompanionModel.hasReadableContext(
+            bookID: bookID,
+            position: ReadingPosition(chapterIndex: 0, utf16Offset: 8),
+            modelContext: context
+        )
+
+        #expect(hasContext)
+        _ = container
+    }
+
+    @Test func bookStartHasNoReadableContext() throws {
+        let container = try AppStores.makeContainer(ephemeral: true)
+        let context = container.mainContext
+        let bookID = UUID()
+        context.insert(Chapter(bookID: bookID, index: 0, title: "Intro", text: "还没有读到。"))
+        try context.save()
+
+        let hasContext = try CompanionModel.hasReadableContext(
+            bookID: bookID,
+            position: .start,
+            modelContext: context
+        )
+
+        #expect(!hasContext)
+        _ = container
+    }
+}
+
 struct CharacterBudgetTests {
     @Test func latinTextGetsGenerousCharacterBudget() {
         let english = String(repeating: "Reading is thinking with someone else's head. ", count: 50)

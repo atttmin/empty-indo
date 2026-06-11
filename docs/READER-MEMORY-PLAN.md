@@ -220,9 +220,9 @@ case saveMemory(title: String, body: String, tags: [String])
 
 ## 6. 分阶段实施
 
-### Phase 1 — 本地 ReaderMemory（推荐 Claude 先做这个）
+### Phase 1 — 本地 ReaderMemory（已实现）
 
-**目标**：伴读可跨书回忆；思维链接召回变准；无云依赖。
+**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory` 与 `ThoughtLinkFinder` 记忆召回路已落地；MemoryEmbedding 后台索引仍待 Phase 1b。
 
 | 任务 ID | 内容 | 验收 |
 |---------|------|------|
@@ -246,13 +246,13 @@ case saveMemory(title: String, body: String, tags: [String])
 | P1b-1 | `MemoryEmbedding` + 后台索引 actor | 与 `SemanticIndexer` 同模式 |
 | P1b-2 | `recall()` 语义路 | 英文书测试；中文暂词法为主 |
 
-### Phase 2 — 派生记忆 + 确认写入
+### Phase 2 — 派生记忆 + 确认写入（部分实现）
 
-| 任务 ID | 内容 | 验收 |
+| 任务 ID | 内容 | 状态 |
 |---------|------|------|
-| P2-1 | `propose_memory` + `CompanionAction.saveMemory` | 不确认不入库 |
-| P2-2 | 伴读结束时可选提炼主题（仅 cloud / 本机 FM） | 生成 proposal，非自动写 |
-| P2-3 | 记忆压缩：旧 `companionQA` 合并为 `theme` | 手动或设置项触发 |
+| P2-1 | `propose_memory` + `CompanionAction.saveMemory` | 已实现：不确认不入库，确认后写 `theme` |
+| P2-2 | 伴读结束时可选提炼主题（仅 cloud / 本机 FM） | 待做：目前由 agent 显式调用 `propose_memory` |
+| P2-3 | 记忆压缩：旧 `companionQA` 合并为 `theme` | 待做：需要手动触发入口与合并策略 |
 
 ### Phase 3 — 跨设备同步与账号
 

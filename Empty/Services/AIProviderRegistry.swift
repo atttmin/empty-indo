@@ -157,7 +157,7 @@ nonisolated struct AIProviderRegistry: Codable, Equatable, Sendable {
     func service(for provider: AIProvider, apiKey: String? = nil) -> any AIService {
         switch provider.kind {
         case .local:
-            return FoundationModelsAIService()
+            return FoundationModelsService.make()
         case .openAI:
             return CloudAIService(
                 configuration: CloudAIService.Configuration(

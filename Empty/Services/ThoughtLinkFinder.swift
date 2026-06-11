@@ -6,8 +6,8 @@
 import Foundation
 import SwiftData
 
-/// A cross-highlight connection surfaced while reading — semantic recall
-/// first, lexical fallback, AI theme/why on demand.
+/// A cross-library connection surfaced while reading — ReaderMemory first,
+/// raw highlight semantic/lexical fallback, AI theme/why on demand.
 nonisolated struct ThoughtLink: Equatable, Sendable {
     var currentText: String
     var currentSource: String
@@ -76,12 +76,20 @@ struct ThoughtLinkFinder {
         book: Book,
         chapterIndex: Int
     ) throws -> ThoughtLink? {
+        let query = SemanticScorer.queryVector(for: passage)
+        if let memoryLink = try findMemoryLink(
+            passage: passage,
+            book: book,
+            chapterIndex: chapterIndex
+        ) {
+            return memoryLink
+        }
+
         let highlights = try modelContext.fetch(
             FetchDescriptor<Highlight>(
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
         )
-        let query = SemanticScorer.queryVector(for: passage)
 
         var bestScore = 0.0
         var best: Highlight?
@@ -132,6 +140,56 @@ struct ThoughtLinkFinder {
             theme: nil,
             explanation: "两段文字在主题上相呼应。点开看朱批的解读。"
         )
+    }
+
+    private func findMemoryLink(
+        passage: String,
+        book: Book,
+        chapterIndex: Int
+    ) throws -> ThoughtLink? {
+        let memory = ReaderMemory(modelContext: modelContext)
+        try memory.syncFromReaderData()
+        let hits = try memory.recall(query: passage, limit: 5)
+        guard !hits.isEmpty else { return nil }
+
+        let items = try modelContext.fetch(FetchDescriptor<MemoryItem>())
+        var byID: [UUID: MemoryItem] = [:]
+        byID.reserveCapacity(items.count)
+        for item in items { byID[item.id] = item }
+
+        for hit in hits {
+            guard let item = byID[hit.itemID] else { continue }
+            if item.bookID == book.id {
+                if let itemChapter = item.chapterIndex {
+                    guard itemChapter < chapterIndex else { continue }
+                } else {
+                    continue
+                }
+            }
+            if item.sourceRefKind == "highlight",
+               let highlightID = item.sourceRefID,
+               ThoughtLinkFeedback.isBlocked(passage: passage, highlightID: highlightID) {
+                continue
+            }
+            return ThoughtLink(
+                currentText: String(passage.prefix(160)),
+                currentSource: "\(book.title) · 第 \(chapterIndex + 1) 章",
+                relatedText: item.body,
+                relatedSource: item.sourceLabel ?? item.kind.title,
+                relatedBookTitle: relatedBookTitle(for: item),
+                relatedHighlightID: item.sourceRefKind == "highlight" ? item.sourceRefID : nil,
+                theme: item.kind == .theme ? item.title : nil,
+                explanation: "读者记忆中的「\(item.kind.title)」与这段文字相呼应。\(item.body.prefix(180))"
+            )
+        }
+        return nil
+    }
+
+    private func relatedBookTitle(for item: MemoryItem) -> String {
+        guard let sourceLabel = item.sourceLabel, !sourceLabel.isEmpty else {
+            return "读者记忆"
+        }
+        return sourceLabel.components(separatedBy: " · ").first ?? sourceLabel
     }
 
     /// LLM review pass: a short theme label plus the why. Parses the

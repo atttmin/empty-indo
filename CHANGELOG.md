@@ -61,7 +61,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   present, otherwise auto-focuses near the current UTF-16 reading offset, and
   keeps the whole-chapter native text view aligned with the reader context.
 
+
+- CI now compiles with the workflow's lower macOS 15 / iOS 18 deployment
+  overrides: `FoundationModelsAIService` is availability-gated behind a
+  small factory and falls back cleanly on older OS targets; CI unit tests
+  also run with `-parallel-testing-enabled NO` to avoid SwiftData store
+  contention.
+- The companion no longer refuses questions in chapter 1 after the reader
+  has already advanced within the chapter; it now checks `fullyReadText`
+  instead of requiring `chapterIndex > 0`.
+
 ### Added
+
+- ReaderMemory now participates in live thought links: `ThoughtLinkFinder`
+  tries saved highlight notes, link cards, Q&A cards, and confirmed
+  `theme` memories before falling back to raw highlight matching.
+- Added a deterministic XCUITest smoke flow for seeded reader → highlights
+  → export → copy, so the product loop has UI coverage beyond screenshots.
 
 - 语言设置 (per the 语言设置原型 design): a global目标语言 (简中/繁中/
   English/日本語) that 译文、释义、朱的回答 all follow, with 作用范围 rows
@@ -146,6 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   highlight), reader chrome exposes stable accessibility IDs for automation,
   and the UI smoke suite now exercises the native highlight sheet / jump-back
   flow on both macOS and iOS.
+
 ### Added (earlier rounds)
 
 - iOS 随身伴读 aligned with the 02 iOS prototype:
@@ -182,6 +199,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`LibraryView`, `NotesView`, `StudyView`, `VocabReviewView`,
   `AskBookView` removed); reading settings dropped their own dark-mode
   toggle — the reader now follows the system / workbench theme
+
+- Split reader support views out of the two largest files:
+  `ChapterListView`, `ReadingSettingsView`, `DictionaryLookupView`, and
+  `MacTOCPanel` now live in focused files while preserving behavior.
 
 ### Added (Mac batch)
 

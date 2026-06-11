@@ -21,6 +21,7 @@ import FoundationModels
 /// Free, offline, private: the right default route. Deep-reasoning features
 /// route to a cloud provider later through the same `AIService` protocol.
 #if canImport(FoundationModels)
+@available(macOS 26.0, iOS 26.0, visionOS 26.0, *)
 final class FoundationModelsAIService: AIService {
     /// Token budget for prompt input. The model's context window is ~4096
     /// tokens shared by instructions, input, and output; this leaves
@@ -218,6 +219,7 @@ final class FoundationModelsAIService: AIService {
 
 // MARK: - Guided generation drafts
 
+@available(macOS 26.0, iOS 26.0, visionOS 26.0, *)
 @Generable
 private struct CitedAnswerDraft {
     @Guide(description: "The answer, drawn only from the numbered passages.")
@@ -226,6 +228,7 @@ private struct CitedAnswerDraft {
     var citedPassageIDs: [Int]
 }
 
+@available(macOS 26.0, iOS 26.0, visionOS 26.0, *)
 @Generable
 private struct FlashcardDraft {
     @Guide(description: "A question testing understanding of the passage.")
@@ -234,6 +237,7 @@ private struct FlashcardDraft {
     var answer: String
 }
 
+@available(macOS 26.0, iOS 26.0, visionOS 26.0, *)
 @Generable
 private struct AgentStepDraft {
     @Guide(description: "Either \"call\" to use a tool, or \"finish\" to reply to the reader.")
@@ -246,6 +250,7 @@ private struct AgentStepDraft {
     var answer: String
 }
 
+@available(macOS 26.0, iOS 26.0, visionOS 26.0, *)
 @Generable
 private struct FlashcardSetDraft {
     @Guide(description: "Study cards covering the passage's key ideas.")
@@ -314,14 +319,27 @@ private enum Prompts {
         """
     }
 }
-#else
-/// Stub for CI and SDKs without the Foundation Models framework (e.g. GitHub
-/// Actions runners on older Xcode). Routes through `resolveUsableService()`
-/// fall back to cloud when configured.
-final class FoundationModelsAIService: AIService {
+#endif
+
+@MainActor
+enum FoundationModelsService {
+    static func make() -> any AIService {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, iOS 26.0, visionOS 26.0, *) {
+            return FoundationModelsAIService()
+        }
+        #endif
+        return UnavailableFoundationModelsAIService()
+    }
+}
+
+/// Stub for CI, older OS releases, and SDKs without the Foundation Models
+/// framework. Routes through `resolveUsableService()` fall back to cloud when
+/// configured.
+private final class UnavailableFoundationModelsAIService: AIService {
     var availability: AIAvailability {
         .unavailable(
-            reason: "On-device Apple Intelligence requires a newer SDK with the Foundation Models framework."
+            reason: "On-device Apple Intelligence requires iOS/macOS 26 or a newer SDK with the Foundation Models framework."
         )
     }
 
@@ -357,4 +375,3 @@ final class FoundationModelsAIService: AIService {
         return .finish(answer: "")
     }
 }
-#endif

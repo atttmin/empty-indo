@@ -67,7 +67,11 @@ final class CompanionModel {
                     ))
                     return
                 }
-                guard position.chapterIndex > 0 else {
+                guard try Self.hasReadableContext(
+                    bookID: book.id,
+                    position: position,
+                    modelContext: modelContext
+                ) else {
                     messages.append(Message(
                         role: .ai,
                         text: "答案池是你已经读过的部分 — 先往后读一点,再来问我。"
@@ -127,6 +131,19 @@ final class CompanionModel {
                 ))
             }
         }
+    }
+
+    static func hasReadableContext(
+        bookID: UUID,
+        position: ReadingPosition,
+        modelContext: ModelContext
+    ) throws -> Bool {
+        let readText = try Chapter.fullyReadText(
+            forBookID: bookID,
+            before: position,
+            in: modelContext
+        )
+        return !readText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// The pre-agent pipeline: spoiler-safe retrieval + one grounded answer.

@@ -25,6 +25,7 @@ jobs:
             -project Empty.xcodeproj \
             -scheme Empty \
             -destination 'platform=macOS' \
+            -parallel-testing-enabled NO \
             -only-testing:EmptyTests \
             -skip-testing:EmptyUITests \
             CODE_SIGNING_ALLOWED=NO \

@@ -2,10 +2,10 @@
 //  ReaderMemory.swift
 //  Empty
 //
-//  Phase 1 of docs/READER-MEMORY-PLAN.md: ingest reader behaviour into
+//  Phase 1/2 of docs/READER-MEMORY-PLAN.md: ingest reader behaviour into
 //  MemoryItem rows (idempotent by sourceRefID), recall them by blended
-//  lexical + semantic score with provenance, and format observations
-//  for the reading agent. The master switch (设置里一关即「失忆」)
+//  lexical + semantic score with provenance, and accept reader-confirmed
+//  theme memories from the agent. The master switch (设置里一关即「失忆」)
 //  empties recall without deleting anything.
 //
 

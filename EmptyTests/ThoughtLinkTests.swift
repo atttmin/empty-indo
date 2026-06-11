@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftData
 import Testing
 @testable import Empty
 
@@ -68,5 +69,39 @@ struct ThoughtLinkFeedbackTests {
         #expect(ThoughtLinkFeedback.isBlocked(
             passage: "段落丙", highlightID: highlightID, defaults: defaults
         ))
+    }
+}
+
+@MainActor
+struct ThoughtLinkMemoryRouteTests {
+    @Test func linkCardsSurfaceThroughReaderMemoryWhenNoHighlightsMatch() throws {
+        let container = try AppStores.makeContainer(ephemeral: true)
+        let context = container.mainContext
+
+        let priorBook = Book(title: "道德经", format: .epub)
+        let currentBook = Book(title: "马斯克传", format: .epub)
+        context.insert(priorBook)
+        context.insert(currentBook)
+        let card = StudyCardEntry(
+            question: "不争之争：道德经与马斯克传的呼应",
+            answer: "两者都把退让看作竞争策略。",
+            source: "道德经 ⟷ 马斯克传",
+            kind: .link
+        )
+        card.book = priorBook
+        context.insert(card)
+        try context.save()
+
+        let found = try ThoughtLinkFinder(modelContext: context).findLink(
+            passage: "这一段讨论以退让换取长期竞争优势。",
+            book: currentBook,
+            chapterIndex: 0
+        )
+        let link = try #require(found)
+
+        #expect(link.relatedSource == "道德经 ⟷ 马斯克传")
+        #expect(link.relatedText.contains("退让"))
+        #expect(link.explanation.contains("读者记忆"))
+        _ = container
     }
 }

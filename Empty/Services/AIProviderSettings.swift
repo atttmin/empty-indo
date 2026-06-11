@@ -94,7 +94,7 @@ nonisolated struct AIProviderSettings: Equatable, Sendable {
     ) -> any AIService {
         switch mode {
         case .onDevice:
-            return FoundationModelsAIService()
+            return FoundationModelsService.make()
         case .cloud:
             switch cloudProtocol {
             case .openAI:

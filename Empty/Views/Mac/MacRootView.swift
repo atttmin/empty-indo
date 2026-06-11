@@ -69,8 +69,8 @@ struct MacRootView: View {
     }
 
     /// `-ScreenshotSeed` imports the demo book, `-ScreenshotSeedHighlight`
-    /// adds one deterministic note, and `-OpenReader` opens that seeded book
-    /// (falling back to the most recently read one).
+    /// adds one deterministic note, `-OpenReader` opens that seeded book,
+    /// and `-OpenHighlights` asks the reader to show the highlight sheet.
     private func applyLaunchOverrides() {
         let seeded = try? ScreenshotSeeder.seedDemoBookIfNeeded(modelContext: modelContext)
         guard ProcessInfo.processInfo.arguments.contains("-OpenReader") else { return }

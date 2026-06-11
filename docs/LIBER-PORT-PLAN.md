@@ -75,12 +75,12 @@
 
 **目标**：Liber 的 `get_echoes` 逻辑，改成 **只跨用户已读书籍 + 已读高亮/链接**，并遵守防剧透。
 
-| 任务 | Liber 参考 | Empty 落点 |
-|------|------------|------------|
-| E1-1 | `echoesForSid` 合并策略 | `ReaderMemory.recall` + `ThoughtLinkFinder` 双路：词法 + 语义 |
-| E1-2 | `echo_edges` + 惰性 `why` | 本地 `MemoryItem` / 可选 `EchoEdge` 模型；`explainLink` 仅首次展示时生成 |
-| E1-3 | `get_echoes` 工具 | `ReadingToolbox` 升级 `find_link` → 可返回 **多条** 呼应 + `theme` |
-| E1-4 | `agent.ts` steps | 伴读 UI 已支持 steps；补充「呼应 · 主题」trace 文案 |
+| 任务 | Liber 参考 | Empty 落点 | 状态 |
+|------|------------|------------|------|
+| E1-1 | `echoesForSid` 合并策略 | `ReaderMemory.recall` + `ThoughtLinkFinder` 双路：记忆召回 + 高亮词法/语义 | 已做基础版 |
+| E1-2 | `echo_edges` + 惰性 `why` | 本地 `MemoryItem` / 可选 `EchoEdge` 模型；`explainLink` 仅首次展示时生成 | `MemoryItem` + 惰性 `why` 已有；`EchoEdge` 待做 |
+| E1-3 | `get_echoes` 工具 | `ReadingToolbox` 升级 `find_link` → 可返回 **多条** 呼应 + `theme` | 单条已做；多条待做 |
+| E1-4 | `agent.ts` steps | 伴读 UI 已支持 steps；补充「呼应 · 主题」trace 文案 | steps 已有；trace 文案待细化 |
 
 **与 Liber 的关键差异**：
 
