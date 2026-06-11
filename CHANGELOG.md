@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A corrupted or partially-imported book could no longer be removed: book
+  deletion now always clears the library record (and sweeps its chapters,
+  chunks, and cached translations), and on-disk file removal is
+  best-effort — a damaged or locked file directory is skipped instead of
+  aborting the delete. Deletion is also more discoverable on Mac: the
+  continue-reading hero gets a ⋯ menu and context-menu delete, and shelf
+  covers reveal a trash button on hover (the right-click menu stays)
+
 ### Added
 
 - Two cloud standards behind the same `AIService` protocol: the existing

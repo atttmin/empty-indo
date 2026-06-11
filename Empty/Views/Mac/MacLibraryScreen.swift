@@ -56,8 +56,12 @@ struct MacLibraryScreen: View {
                 header
 
                 if let continueBook {
-                    ContinueReadingHero(book: continueBook, onOpen: onOpenBook)
-                        .padding(.top, 28)
+                    ContinueReadingHero(
+                        book: continueBook,
+                        onOpen: onOpenBook,
+                        onDelete: delete
+                    )
+                    .padding(.top, 28)
                 }
 
                 shelfHeader
@@ -72,7 +76,7 @@ struct MacLibraryScreen: View {
                     spacing: 24
                 ) {
                     ForEach(shelfBooks) { book in
-                        ShelfItem(book: book, onOpen: onOpenBook)
+                        ShelfItem(book: book, onOpen: onOpenBook, onDelete: delete)
                             .contextMenu {
                                 Button("删除", systemImage: "trash", role: .destructive) {
                                     delete(book)
@@ -189,6 +193,7 @@ struct MacLibraryScreen: View {
 private struct ContinueReadingHero: View {
     let book: Book
     var onOpen: (Book) -> Void
+    var onDelete: (Book) -> Void
 
     @Environment(\.emptyPalette) private var palette
     @Environment(\.modelContext) private var modelContext
@@ -216,6 +221,22 @@ private struct ContinueReadingHero: View {
                             .font(.system(size: 12))
                             .foregroundStyle(palette.ink3)
                     }
+                    Spacer(minLength: 0)
+                    Menu {
+                        Button("删除这本书", systemImage: "trash", role: .destructive) {
+                            onDelete(book)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(palette.ink3)
+                            .frame(width: 26, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -271,6 +292,11 @@ private struct ContinueReadingHero: View {
         }
         .padding(EdgeInsets(top: 26, leading: 28, bottom: 26, trailing: 28))
         .emptyCard(palette, radius: 18)
+        .contextMenu {
+            Button("删除这本书", systemImage: "trash", role: .destructive) {
+                onDelete(book)
+            }
+        }
         .task(id: "\(book.id)-\(book.position.chapterIndex)") {
             await loadHeroDetails()
         }
@@ -359,8 +385,10 @@ private struct ContinueReadingHero: View {
 private struct ShelfItem: View {
     let book: Book
     var onOpen: (Book) -> Void
+    var onDelete: (Book) -> Void
 
     @Environment(\.emptyPalette) private var palette
+    @State private var isHovering = false
 
     var body: some View {
         Button {
@@ -368,6 +396,25 @@ private struct ShelfItem: View {
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 BookCoverView(book: book)
+                    .overlay(alignment: .topTrailing) {
+                        if isHovering {
+                            Button {
+                                onDelete(book)
+                            } label: {
+                                Image(systemName: "trash.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(palette.onAccent)
+                                    .frame(width: 24, height: 24)
+                                    .background(palette.accent, in: Circle())
+                                    .overlay(Circle().strokeBorder(palette.onAccent.opacity(0.3), lineWidth: 1))
+                                    .shadow(color: .black.opacity(0.3), radius: 4, y: 1)
+                            }
+                            .buttonStyle(.plain)
+                            .help("删除这本书")
+                            .padding(6)
+                            .transition(.opacity)
+                        }
+                    }
                 Text(book.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(palette.ink)
@@ -381,6 +428,9 @@ private struct ShelfItem: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) { isHovering = hovering }
+        }
     }
 
     private var statusLine: String {

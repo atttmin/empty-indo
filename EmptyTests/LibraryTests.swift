@@ -93,6 +93,44 @@ struct LibraryTests {
         #expect(try context.fetchCount(FetchDescriptor<Chunk>()) == 0)
         #expect(!FileManager.default.fileExists(atPath: bookDirectory.path))
     }
+
+    @Test func deleteSweepsCachedTranslations() throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let source = try fixture.writeSourceFile(named: "Cached.epub")
+        let book = try fixture.library.importBook(from: source)
+        let context = fixture.context
+
+        context.insert(ParagraphTranslation(
+            bookID: book.id, chapterIndex: 0, kind: .bilingual,
+            textHash: TranslationStore.hash("a paragraph long enough to translate"),
+            translation: "一段足够长的译文"
+        ))
+        try context.save()
+        #expect(try context.fetchCount(FetchDescriptor<ParagraphTranslation>()) == 1)
+
+        try fixture.library.deleteBook(book)
+
+        #expect(try context.fetchCount(FetchDescriptor<Book>()) == 0)
+        #expect(try context.fetchCount(FetchDescriptor<ParagraphTranslation>()) == 0)
+    }
+
+    @Test func deleteRemovesRecordEvenWhenFilesAreGone() throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let source = try fixture.writeSourceFile(named: "Corrupted.epub")
+        let book = try fixture.library.importBook(from: source)
+        let context = fixture.context
+
+        // Simulate a damaged/partially-imported book: the on-disk files are
+        // gone, so the record is the only thing left to remove.
+        let bookDirectory = fixture.store.url(forRelativePath: book.id.uuidString)
+        try? FileManager.default.removeItem(at: bookDirectory)
+
+        // Must not throw, and must clear the library record.
+        try fixture.library.deleteBook(book)
+        #expect(try context.fetchCount(FetchDescriptor<Book>()) == 0)
+    }
 }
 
 /// Ephemeral container + temp-directory file store, torn down per test.

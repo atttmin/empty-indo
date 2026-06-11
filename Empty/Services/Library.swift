@@ -174,9 +174,18 @@ struct Library {
 
     /// Deletes a book everywhere it exists: the synced record (highlights
     /// and sessions cascade with it), local derived data (chapters cascade
-    /// their chunks; stray chunks swept by `bookID`), and the imported
-    /// files, unzipped archive included.
-    func deleteBook(_ book: Book) throws {
+    /// their chunks; stray chunks and cached translations swept by
+    /// `bookID`), and the imported files, unzipped archive included.
+    ///
+    /// Removing the library record is the operation that must always
+    /// succeed — including for a corrupted or partially-imported book.
+    /// On-disk file removal is therefore best-effort: a locked or damaged
+    /// file directory is swept when it can be and otherwise left behind
+    /// rather than blocking the delete. Returns the file-removal error (if
+    /// any) for diagnostics, but the book is gone from the library either
+    /// way.
+    @discardableResult
+    func deleteBook(_ book: Book) throws -> Error? {
         let bookID = book.id
 
         let chapters = try modelContext.fetch(
@@ -191,9 +200,24 @@ struct Library {
         for chunk in strayChunks {
             modelContext.delete(chunk)
         }
+        let translations = try modelContext.fetch(
+            FetchDescriptor<ParagraphTranslation>(
+                predicate: #Predicate { $0.bookID == bookID }
+            )
+        )
+        for translation in translations {
+            modelContext.delete(translation)
+        }
 
         modelContext.delete(book)
         try modelContext.save()
-        try fileStore.removeFiles(forBookID: bookID)
+
+        // Best effort — never let a damaged file keep the book in the library.
+        do {
+            try fileStore.removeFiles(forBookID: bookID)
+            return nil
+        } catch {
+            return error
+        }
     }
 }
