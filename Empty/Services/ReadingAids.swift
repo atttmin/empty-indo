@@ -127,6 +127,31 @@ nonisolated enum VocabCloze {
     }
 }
 
+// MARK: - Roman numerals (目录章号)
+
+nonisolated enum RomanNumeral {
+    private static let table: [(Int, String)] = [
+        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    ]
+
+    /// "I", "II", … for the TOC's chapter numerals; values < 1 fall back
+    /// to the decimal form.
+    static func format(_ value: Int) -> String {
+        guard value >= 1 else { return "\(value)" }
+        var remaining = value
+        var result = ""
+        for (amount, glyph) in table {
+            while remaining >= amount {
+                remaining -= amount
+                result += glyph
+            }
+        }
+        return result
+    }
+}
+
 // MARK: - Review queue forecast (下次队列)
 
 nonisolated enum VocabQueueForecast {

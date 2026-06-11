@@ -40,6 +40,7 @@ enum AppStores {
     static let localSchema = Schema([
         Chapter.self,
         Chunk.self,
+        ParagraphTranslation.self,
     ])
 
     /// - Parameter ephemeral: throwaway per-container stores for tests and
@@ -88,6 +89,7 @@ enum AppStores {
             StudyCardEntry.self,
             Chapter.self,
             Chunk.self,
+            ParagraphTranslation.self,
         ])
         do {
             return try ModelContainer(for: allModels, configurations: synced, local)

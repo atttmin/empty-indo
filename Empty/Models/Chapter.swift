@@ -36,6 +36,9 @@ final class Chapter {
     /// Cached three-part chapter outline in `ChapterOutline` line format,
     /// backing the reader's structured 章节概览 card.
     var cachedOutline: String?
+    /// Set when every translatable paragraph of this chapter has a cached
+    /// 译文 — the TOC's durable "✓ 已缓存" signal across launches.
+    var pretranslatedAt: Date?
 
     var text: String {
         get { String(decoding: textData, as: UTF8.self) }

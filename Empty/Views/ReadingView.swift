@@ -40,6 +40,13 @@ nonisolated enum InlineNoteKind: String {
     case companion = "comp"
 }
 
+/// How bilingual notes lay out: stacked under each paragraph (iOS), or
+/// the prototype's side-by-side parallel text (Mac 双语对照).
+nonisolated enum InlineNoteLayout: String {
+    case stacked
+    case parallel
+}
+
 /// One in-flow AI note (a paragraph's translation or 导读 paraphrase),
 /// keyed by the paragraph's index in the chapter DOM.
 nonisolated struct InlineNotePaint: Codable, Equatable {
@@ -792,10 +799,12 @@ struct ReadingView: View {
     // MARK: 双语对照 (译)
 
     /// Translates the visible paragraphs the chapter page reports, in
-    /// reading order, replaying cached ones instantly.
+    /// reading order. Resolution: in-memory → persistent cache (the
+    /// 「不重复翻译」 rule — reopening a book never re-translates) → AI.
     private func handleVisibleParagraphs(_ paragraphs: [ReaderParagraph]) {
         guard isBilingual else { return }
         let chapter = currentChapterIndex
+        let store = TranslationStore(modelContext: modelContext)
         var missing: [ReaderParagraph] = []
         for paragraph in paragraphs {
             let key = inlineNoteKey(chapter: chapter, idx: paragraph.idx)
@@ -803,6 +812,15 @@ struct ReadingView: View {
                 if !cached.isEmpty,
                    !inlineNotes.contains(where: { $0.idx == paragraph.idx }) {
                     inlineNotes.append(InlineNotePaint(idx: paragraph.idx, text: cached))
+                }
+            } else if let persisted = store.lookup(
+                bookID: book.id,
+                kind: .bilingual,
+                text: paragraph.text
+            ) {
+                inlineCache[key] = persisted
+                if !inlineNotes.contains(where: { $0.idx == paragraph.idx }) {
+                    inlineNotes.append(InlineNotePaint(idx: paragraph.idx, text: persisted))
                 }
             } else if !inlineInFlight.contains(key) {
                 inlineInFlight.insert(key)
@@ -837,12 +855,22 @@ struct ReadingView: View {
                 )
                 let text = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 inlineCache[key] = text
+                if !text.isEmpty {
+                    TranslationStore(modelContext: modelContext).store(
+                        text,
+                        bookID: book.id,
+                        chapterIndex: chapter,
+                        kind: .bilingual,
+                        text: paragraph.text
+                    )
+                }
                 if isBilingual, currentChapterIndex == chapter, !text.isEmpty {
                     inlineNotes.append(InlineNotePaint(idx: paragraph.idx, text: text))
                 }
             } catch {
-                // Cache the failure so a flaky provider isn't re-polled on
-                // every page turn.
+                // Remember the failure in memory only, so a flaky provider
+                // isn't re-polled on every page turn but a fresh visit
+                // retries.
                 inlineCache[key] = ""
             }
         }
@@ -1009,6 +1037,7 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
     var chapterPlainText: String?
     var paints: [HighlightPaint] = []
     var inlineKind: InlineNoteKind = .none
+    var inlineLayout: InlineNoteLayout = .stacked
     var inlineNotes: [InlineNotePaint] = []
     var onTap: () -> Void = {}
     var onChapterBoundary: (PageTurnDirection) -> Void = { _ in }
@@ -1096,6 +1125,7 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
                 )
             }
         }
+        applyInlineLayout(on: webView)
         applyPaints(on: webView)
         applyInlineMode(on: webView)
         applyInlineNotes(on: webView)
@@ -1123,6 +1153,13 @@ final class ReaderBridge: NSObject, WKNavigationDelegate, WKScriptMessageHandler
     func applyInlineMode(on webView: WKWebView) {
         webView.evaluateJavaScript(
             "if (typeof readerSetInlineMode === 'function') { readerSetInlineMode('\(inlineKind.rawValue)'); }"
+        )
+    }
+
+    /// Switches between stacked notes and the side-by-side parallel text.
+    func applyInlineLayout(on webView: WKWebView) {
+        webView.evaluateJavaScript(
+            "if (typeof readerSetLayout === 'function') { readerSetLayout('\(inlineLayout.rawValue)'); }"
         )
     }
 
@@ -1162,6 +1199,7 @@ struct ChapterWebView: UIViewRepresentable {
     let chapterPlainText: String?
     let highlights: [HighlightPaint]
     var inlineMode: InlineNoteKind = .none
+    var inlineLayout: InlineNoteLayout = .stacked
     var inlineNotes: [InlineNotePaint] = []
     let onTap: () -> Void
     let onChapterBoundary: (PageTurnDirection) -> Void
@@ -1185,6 +1223,7 @@ struct ChapterWebView: UIViewRepresentable {
         context.coordinator.currentChapter = chapter.href
         context.coordinator.paints = highlights
         context.coordinator.inlineKind = inlineMode
+        context.coordinator.inlineLayout = inlineLayout
         context.coordinator.inlineNotes = inlineNotes
         loadChapter(in: webView)
         return webView
@@ -1196,6 +1235,7 @@ struct ChapterWebView: UIViewRepresentable {
             context.coordinator.currentChapter = chapter.href
             context.coordinator.paints = highlights
             context.coordinator.inlineKind = inlineMode
+            context.coordinator.inlineLayout = inlineLayout
             context.coordinator.inlineNotes = inlineNotes
             loadChapter(in: webView)
         } else {
@@ -1205,6 +1245,10 @@ struct ChapterWebView: UIViewRepresentable {
             if context.coordinator.paints != highlights {
                 context.coordinator.paints = highlights
                 context.coordinator.applyPaints(on: webView)
+            }
+            if context.coordinator.inlineLayout != inlineLayout {
+                context.coordinator.inlineLayout = inlineLayout
+                context.coordinator.applyInlineLayout(on: webView)
             }
             if context.coordinator.inlineKind != inlineMode {
                 context.coordinator.inlineKind = inlineMode
@@ -1239,6 +1283,7 @@ struct ChapterWebView: NSViewRepresentable {
     let chapterPlainText: String?
     let highlights: [HighlightPaint]
     var inlineMode: InlineNoteKind = .none
+    var inlineLayout: InlineNoteLayout = .stacked
     var inlineNotes: [InlineNotePaint] = []
     let onTap: () -> Void
     let onChapterBoundary: (PageTurnDirection) -> Void
@@ -1257,6 +1302,7 @@ struct ChapterWebView: NSViewRepresentable {
         context.coordinator.currentChapter = chapter.href
         context.coordinator.paints = highlights
         context.coordinator.inlineKind = inlineMode
+        context.coordinator.inlineLayout = inlineLayout
         context.coordinator.inlineNotes = inlineNotes
         loadChapter(in: webView)
         return webView
@@ -1268,6 +1314,7 @@ struct ChapterWebView: NSViewRepresentable {
             context.coordinator.currentChapter = chapter.href
             context.coordinator.paints = highlights
             context.coordinator.inlineKind = inlineMode
+            context.coordinator.inlineLayout = inlineLayout
             context.coordinator.inlineNotes = inlineNotes
             loadChapter(in: webView)
         } else {
@@ -1277,6 +1324,10 @@ struct ChapterWebView: NSViewRepresentable {
             if context.coordinator.paints != highlights {
                 context.coordinator.paints = highlights
                 context.coordinator.applyPaints(on: webView)
+            }
+            if context.coordinator.inlineLayout != inlineLayout {
+                context.coordinator.inlineLayout = inlineLayout
+                context.coordinator.applyInlineLayout(on: webView)
             }
             if context.coordinator.inlineKind != inlineMode {
                 context.coordinator.inlineKind = inlineMode
@@ -1330,9 +1381,11 @@ extension ChapterWebView {
             * { box-sizing: border-box; }
             :root {
                 --e-ink2: \(isDarkMode ? "#C4B9A4" : "#5C5443");
+                --e-ink3: \(isDarkMode ? "#8A8070" : "#988E7D");
                 --e-line2: \(isDarkMode ? "#453C2F" : "#D8CEBB");
                 --e-acc: \(isDarkMode ? "#D86B47" : "#B5482A");
                 --e-acc-soft: \(isDarkMode ? "rgba(216,107,71,0.12)" : "rgba(181,72,42,0.08)");
+                --e-acc-line: \(isDarkMode ? "rgba(216,107,71,0.45)" : "rgba(181,72,42,0.4)");
             }
             html {
                 height: 100%;
@@ -1388,16 +1441,60 @@ extension ChapterWebView {
             }
             table { border-collapse: collapse; max-width: 100%; }
             td, th { border: 1px solid \(isDarkMode ? "#444" : "#ddd"); padding: 8px; }
-            /* 双语对照: quiet gray serif under the original paragraph. */
+            /* 双语对照 (stacked): quiet serif under the paragraph, led by
+               a thin vermilion rule. */
             div[data-einject="bi"] {
                 font-family: "Noto Serif SC", "Songti SC", serif;
-                font-size: 0.78em;
-                line-height: 2;
+                font-size: 0.76em;
+                line-height: 2.05;
                 color: var(--e-ink2);
                 margin: 4px 0 14px;
-                padding-left: 14px;
-                border-left: 1px solid var(--e-line2);
+                padding-left: 13px;
+                border-left: 1.5px solid var(--e-acc-line);
                 text-align: justify;
+            }
+            /* 双语对照 (parallel): the Mac prototype's side-by-side
+               columns — original left, 译文 right, paired and hoverable. */
+            body.e-parallel {
+                height: 100%;
+                column-width: auto !important;
+                column-gap: 0 !important;
+                overflow-y: auto !important;
+                overflow-x: hidden !important;
+            }
+            .e-pair {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                column-gap: 30px;
+                padding: 14px 12px;
+                border-bottom: 1px dashed var(--e-line2);
+                border-radius: 10px;
+            }
+            .e-pair:hover { background: var(--e-acc-soft); }
+            .e-pair .e-orig > p { margin: 0; }
+            .e-pair .e-trans {
+                font-family: "Noto Serif SC", "Songti SC", serif;
+                font-size: 0.78em;
+                line-height: 2.18;
+                color: var(--e-ink2);
+                text-align: justify;
+            }
+            .e-pending {
+                font-size: 0.78em;
+                color: var(--e-ink3);
+            }
+            .e-caret {
+                display: inline-block;
+                width: 7px;
+                height: 0.9em;
+                background: var(--e-acc);
+                vertical-align: -0.1em;
+                margin-left: 3px;
+                animation: e-blink 1s infinite;
+            }
+            @keyframes e-blink {
+                0%, 100% { opacity: 0.15; }
+                50% { opacity: 1; }
             }
             /* 导读: a 朱批 callout that retells the paragraph. */
             div[data-einject="comp"] {
@@ -1427,10 +1524,35 @@ extension ChapterWebView {
         // 'none' | 'bi' | 'comp'. Injected blocks carry data-einject and are
         // invisible to position math, highlight anchoring and selection.
         let inlineKind = 'none';
-        let appliedNotes = {};
+        // 'paged' (horizontal columns) | 'parallel' (vertical scroll with
+        // side-by-side pairs — the Mac 双语对照).
+        let layoutMode = 'paged';
+        // idx -> 译文, kept across layout switches so pairs refill instantly.
+        let translations = {};
         function pageWidth() { return window.innerWidth; }
         function readerPageCount() {
+            if (layoutMode === 'parallel') {
+                return Math.max(1, Math.ceil(document.body.scrollHeight / window.innerHeight));
+            }
             return Math.max(1, Math.round(document.body.scrollWidth / pageWidth()));
+        }
+        // The screen currently in view — pageIndex in paged mode, the
+        // scroll viewport's ordinal in parallel mode.
+        function currentPage() {
+            if (layoutMode === 'parallel') {
+                return Math.floor(document.body.scrollTop / Math.max(1, window.innerHeight));
+            }
+            return pageIndex;
+        }
+        // Which screen an element starts on, stable mid-scroll on either axis.
+        function elementPage(el) {
+            const rect = el.getBoundingClientRect();
+            if (layoutMode === 'parallel') {
+                const abs = rect.top + document.body.scrollTop;
+                return Math.floor(abs / Math.max(1, window.innerHeight));
+            }
+            const abs = rect.left + document.body.scrollLeft;
+            return Math.floor(abs / pageWidth());
         }
         // Text walker that skips injected inline notes, so the chapter's
         // normalized buffer matches the stored plain text exactly.
@@ -1446,24 +1568,26 @@ extension ChapterWebView {
         function readerParagraphs() {
             return Array.prototype.slice.call(document.querySelectorAll('p'));
         }
-        // Page a paragraph starts on, stable even mid smooth-scroll:
-        // rect.left is viewport-relative, so adding scrollLeft recovers the
-        // absolute x inside the column flow.
-        function paragraphPage(p) {
-            const abs = p.getBoundingClientRect().left + document.body.scrollLeft;
-            return Math.floor(abs / pageWidth());
+        // Whether a paragraph is worth pairing/translating.
+        function translatableText(p) {
+            const text = p.innerText.replace(/\\s+/g, ' ').trim();
+            return (text.length >= 40 && text.length <= 4000) ? text : null;
         }
-        // Paragraphs the reader is looking at: those starting on the current
-        // page, plus the straddler flowing in from the previous page.
+        // Paragraphs the reader is looking at: those starting on the
+        // current screen plus the straddler from the previous one; in
+        // parallel mode also the next screen, so 译文 lands before the
+        // reader scrolls to it (预译 ahead of the fold).
         function visibleParagraphIndexes() {
             const paras = readerParagraphs();
+            const page = currentPage();
+            const lastPage = layoutMode === 'parallel' ? page + 1 : page;
             const out = [];
             let straddler = -1;
             for (let i = 0; i < paras.length; i++) {
-                const page = paragraphPage(paras[i]);
-                if (page < pageIndex) { straddler = i; }
-                else if (page === pageIndex) { out.push(i); }
-                else if (page > pageIndex) { break; }
+                const p = elementPage(paras[i]);
+                if (p < page) { straddler = i; }
+                else if (p <= lastPage) { out.push(i); }
+                else { break; }
             }
             if (straddler >= 0) { out.unshift(straddler); }
             return out;
@@ -1471,20 +1595,88 @@ extension ChapterWebView {
         function reportInlineParagraphs() {
             if (inlineKind === 'none') { return; }
             const paras = readerParagraphs();
+            const cap = layoutMode === 'parallel' ? 10 : 6;
             const items = [];
             visibleParagraphIndexes().forEach(function (idx) {
-                if (items.length >= 6 || appliedNotes[idx]) { return; }
-                const text = paras[idx].innerText.replace(/\\s+/g, ' ').trim();
-                if (text.length < 40 || text.length > 4000) { return; }
+                if (items.length >= cap || translations[idx] !== undefined) { return; }
+                const text = translatableText(paras[idx]);
+                if (!text) { return; }
                 items.push({ idx: idx, text: text });
             });
             if (items.length) { post({ type: 'paragraphs', items: items }); }
         }
         function clearInlineNotes() {
-            document.querySelectorAll('[data-einject]').forEach(function (el) {
-                el.remove();
+            document.querySelectorAll('div[data-einject="bi"], div[data-einject="comp"]')
+                .forEach(function (el) {
+                    if (el.classList.contains('e-trans')) {
+                        el.innerHTML = '';
+                    } else {
+                        el.remove();
+                    }
+                });
+            translations = {};
+        }
+        // ---- Parallel pairs (左右分栏) ----
+        function pendingMarkup() {
+            return '<span class="e-pending">⟳ 预译中 — 原文先显示,译文随缓存补齐</span><span class="e-caret"></span>';
+        }
+        function renderPair(idx) {
+            const pair = document.querySelector('div[data-epair="' + idx + '"]');
+            if (!pair) { return; }
+            const trans = pair.querySelector('.e-trans');
+            if (!trans) { return; }
+            if (translations[idx]) {
+                trans.textContent = translations[idx];
+            } else {
+                trans.innerHTML = pendingMarkup();
+            }
+        }
+        function wrapPairs() {
+            readerParagraphs().forEach(function (p, idx) {
+                if (p.closest('.e-pair')) { return; }
+                if (!translatableText(p)) { return; }
+                const pair = document.createElement('div');
+                pair.className = 'e-pair';
+                pair.setAttribute('data-epair', idx);
+                const orig = document.createElement('div');
+                orig.className = 'e-orig';
+                const trans = document.createElement('div');
+                trans.className = 'e-trans';
+                trans.setAttribute('data-einject', 'bi');
+                p.parentNode.insertBefore(pair, p);
+                orig.appendChild(p);
+                pair.appendChild(orig);
+                pair.appendChild(trans);
+                renderPair(idx);
             });
-            appliedNotes = {};
+        }
+        function unwrapPairs() {
+            document.querySelectorAll('div.e-pair').forEach(function (pair) {
+                const p = pair.querySelector('.e-orig > p');
+                if (p) { pair.parentNode.insertBefore(p, pair); }
+                pair.remove();
+            });
+        }
+        function readerSetLayout(mode) {
+            if (mode === layoutMode) { return; }
+            const anchors = visibleParagraphIndexes();
+            layoutMode = mode;
+            if (mode === 'parallel') {
+                document.body.classList.add('e-parallel');
+                wrapPairs();
+            } else {
+                document.body.classList.remove('e-parallel');
+                unwrapPairs();
+            }
+            requestAnimationFrame(function () {
+                if (anchors.length) {
+                    const p = readerParagraphs()[anchors[0]];
+                    if (p) { pageIndex = Math.max(0, elementPage(p)); }
+                } else {
+                    pageIndex = 0;
+                }
+                applyPage(false);
+            });
         }
         function readerSetInlineMode(kind) {
             if (kind === inlineKind) { reportInlineParagraphs(); return; }
@@ -1494,9 +1686,9 @@ extension ChapterWebView {
             requestAnimationFrame(function () {
                 if (anchors.length) {
                     const p = readerParagraphs()[anchors[0]];
-                    if (p) { pageIndex = Math.max(0, paragraphPage(p)); }
+                    if (p) { pageIndex = Math.max(0, elementPage(p)); }
                 }
-                readerGoTo(pageIndex, false);
+                applyPage(false);
                 reportInlineParagraphs();
             });
         }
@@ -1504,27 +1696,31 @@ extension ChapterWebView {
             if (inlineKind === 'none') { return; }
             const paras = readerParagraphs();
             const anchors = visibleParagraphIndexes();
-            let changed = false;
+            let stackedChange = false;
             items.forEach(function (item) {
-                if (appliedNotes[item.idx]) { return; }
+                if (translations[item.idx]) { return; }
+                translations[item.idx] = item.text;
+                if (layoutMode === 'parallel') {
+                    renderPair(item.idx);
+                    return;
+                }
                 const p = paras[item.idx];
                 if (!p) { return; }
                 const div = document.createElement('div');
                 div.setAttribute('data-einject', inlineKind);
                 div.textContent = item.text;
                 p.insertAdjacentElement('afterend', div);
-                appliedNotes[item.idx] = true;
-                changed = true;
+                stackedChange = true;
             });
-            if (!changed) { return; }
-            // Inserting blocks reflows the columns; stay on the page where
+            if (!stackedChange) { return; }
+            // Stacked inserts reflow the columns; stay on the page where
             // the first visible paragraph now lives.
             requestAnimationFrame(function () {
                 if (anchors.length) {
                     const p = readerParagraphs()[anchors[0]];
-                    if (p) { pageIndex = Math.max(0, paragraphPage(p)); }
+                    if (p) { pageIndex = Math.max(0, elementPage(p)); }
                 }
-                readerGoTo(pageIndex, false);
+                applyPage(false);
             });
         }
         // Normalized chapter text up to the end of the last element that
@@ -1539,9 +1735,8 @@ extension ChapterWebView {
                 const el = node.parentElement;
                 if (el) {
                     const rect = el.getBoundingClientRect();
-                    if (rect.width || rect.height) {
-                        const abs = rect.left + document.body.scrollLeft;
-                        if (Math.floor(abs / pageWidth()) > pageIdx) { break; }
+                    if ((rect.width || rect.height) && elementPage(el) > pageIdx) {
+                        break;
                     }
                 }
                 const value = node.nodeValue;
@@ -1560,20 +1755,29 @@ extension ChapterWebView {
             return normBuffer;
         }
         function reportPosition() {
+            const page = currentPage();
             post({
                 type: 'position',
-                prefix: normalizedTextPrefixThroughPage(pageIndex),
-                page: pageIndex,
+                prefix: normalizedTextPrefixThroughPage(page),
+                page: page,
                 pageCount: readerPageCount()
             });
             reportInlineParagraphs();
         }
         function applyPage(animated) {
-            document.body.scrollTo({
-                left: pageIndex * pageWidth(),
-                top: 0,
-                behavior: animated ? 'smooth' : 'auto'
-            });
+            if (layoutMode === 'parallel') {
+                document.body.scrollTo({
+                    top: pageIndex * window.innerHeight,
+                    left: 0,
+                    behavior: animated ? 'smooth' : 'auto'
+                });
+            } else {
+                document.body.scrollTo({
+                    left: pageIndex * pageWidth(),
+                    top: 0,
+                    behavior: animated ? 'smooth' : 'auto'
+                });
+            }
             reportPosition();
         }
         function readerGoTo(page, animated) {
@@ -1627,28 +1831,55 @@ extension ChapterWebView {
             // Reflow shuffles content between columns; reapply the kept page.
             requestAnimationFrame(function () { readerGoTo(pageIndex, false); });
         }
+        // At the scroll extremes a further keyboard turn crosses chapters.
+        function parallelTurn(forward) {
+            const body = document.body;
+            if (forward) {
+                if (body.scrollTop + window.innerHeight >= body.scrollHeight - 4) {
+                    post('boundaryForward');
+                    return;
+                }
+                body.scrollBy({ top: window.innerHeight * 0.9, behavior: 'smooth' });
+            } else {
+                if (body.scrollTop <= 4) {
+                    post('boundaryBackward');
+                    return;
+                }
+                body.scrollBy({ top: -window.innerHeight * 0.9, behavior: 'smooth' });
+            }
+        }
         // Keyboard: arrows and PageUp/Down; Space pages forward,
-        // Shift+Space backward.
+        // Shift+Space backward. Parallel mode scrolls by near-viewports.
         document.addEventListener('keydown', function (event) {
+            const forward = function () {
+                if (layoutMode === 'parallel') { parallelTurn(true); } else { turnForward(); }
+            };
+            const backward = function () {
+                if (layoutMode === 'parallel') { parallelTurn(false); } else { turnBackward(); }
+            };
             switch (event.key) {
             case 'ArrowRight':
+            case 'ArrowDown':
             case 'PageDown':
-                turnForward(); event.preventDefault(); break;
+                forward(); event.preventDefault(); break;
             case 'ArrowLeft':
+            case 'ArrowUp':
             case 'PageUp':
-                turnBackward(); event.preventDefault(); break;
+                backward(); event.preventDefault(); break;
             case ' ':
-                if (event.shiftKey) { turnBackward(); } else { turnForward(); }
+                if (event.shiftKey) { backward(); } else { forward(); }
                 event.preventDefault(); break;
             }
         });
         // Trackpad and mouse wheel: one gesture turns exactly one page.
         // The lock releases only after the event stream (momentum tail
-        // included) has been quiet for a beat.
+        // included) has been quiet for a beat. Parallel mode keeps the
+        // browser's natural scrolling — 翻页不被任何东西阻塞.
         let wheelAccum = 0;
         let wheelLocked = false;
         let wheelQuietTimer = null;
         window.addEventListener('wheel', function (event) {
+            if (layoutMode === 'parallel') { return; }
             event.preventDefault();
             const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
                 ? event.deltaX : event.deltaY;
@@ -1666,6 +1897,17 @@ extension ChapterWebView {
                 wheelAccum = 0;
             }, 250);
         }, { passive: false });
+        // Parallel mode: report position (and request 译文 for what's on
+        // screen) once scrolling settles.
+        let parallelScrollTimer = null;
+        document.addEventListener('scroll', function () {
+            if (layoutMode !== 'parallel') { return; }
+            clearTimeout(parallelScrollTimer);
+            parallelScrollTimer = setTimeout(function () {
+                pageIndex = currentPage();
+                reportPosition();
+            }, 160);
+        }, { capture: true, passive: true });
         // Touch: a horizontal swipe turns one page.
         let touchStartX = null;
         let touchStartY = null;
@@ -1697,6 +1939,7 @@ extension ChapterWebView {
             const liveSelection = window.getSelection();
             if (liveSelection && liveSelection.toString().trim()) { return; }
             if (Date.now() - lastSwipeAt < 350) { return; }
+            if (layoutMode === 'parallel') { post('toggle'); return; }
             const x = event.clientX / window.innerWidth;
             if (x < 0.25) { turnBackward(); }
             else if (x > 0.75) { turnForward(); }

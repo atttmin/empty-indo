@@ -15,6 +15,13 @@ enum MacReadingMode: String, CaseIterable {
     case companion
 }
 
+/// A chapter's pre-translation state in the TOC (✓已缓存 / ⟳预译中 /
+/// 排队中 / 部分缓存 / 未译).
+enum MacChapterTransStatus: Equatable {
+    case queued
+    case translating(done: Int, total: Int)
+}
+
 struct MacReaderScreen: View {
     let book: Book
     var onBack: () -> Void
@@ -65,6 +72,14 @@ struct MacReaderScreen: View {
     @State private var inlineCache: [String: String] = [:]
     @State private var inlineInFlight: Set<String> = []
     @State private var inlineAIUnavailable = false
+    @State private var isTocOpen = false
+    /// Per-chapter pre-translation activity for the TOC chips.
+    @State private var pretransProgress: [Int: MacChapterTransStatus] = [:]
+    /// Translated chapter titles for the bilingual TOC (kind `.title`).
+    @State private var tocTitleTranslations: [Int: String] = [:]
+    /// Bumps whenever the translation cache changes, so TOC stats refresh.
+    @State private var cacheStatsTick = 0
+    @State private var pretransTask: Task<Void, Never>?
     @StateObject private var aloud = ReadingAloud()
 
     init(
@@ -184,11 +199,39 @@ struct MacReaderScreen: View {
                     .padding(.top, 12)
                 }
 
-                if readingMode != .original {
+                if readingMode == .companion || inlineAIUnavailable {
                     inlineModeStatusBar
                 }
 
                 HStack(spacing: 0) {
+                    if isTocOpen {
+                        MacTOCPanel(
+                            bookTitle: epub.metadata.title,
+                            titles: sectionTitles,
+                            cnTitles: tocTitleTranslations,
+                            currentIndex: currentChapterIndex,
+                            intraChapterFraction: intraChapterFraction,
+                            progressByChapter: pretransProgress,
+                            statsTick: cacheStatsTick,
+                            book: book,
+                            onSelect: { index in
+                                guard index != currentChapterIndex else { return }
+                                currentChapterIndex = index
+                                currentUTF16Offset = 0
+                                chapterLanding = .start
+                                resetChapterArtifacts()
+                            },
+                            onClose: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isTocOpen = false
+                                }
+                            }
+                        )
+                        .frame(width: 272)
+                        .transition(.move(edge: .leading))
+                        Rectangle().fill(palette.line).frame(width: 1)
+                    }
+
                     VStack(spacing: 0) {
                         ZStack(alignment: .bottom) {
                             ChapterWebView(
@@ -202,6 +245,7 @@ struct MacReaderScreen: View {
                                 chapterPlainText: currentChapterPlainText(),
                                 highlights: chapterHighlights,
                                 inlineMode: inlineNoteKind,
+                                inlineLayout: readingMode == .bilingual ? .parallel : .stacked,
                                 inlineNotes: inlineNotes,
                                 onTap: { pendingSelection = nil },
                                 onChapterBoundary: { direction in
@@ -258,20 +302,6 @@ struct MacReaderScreen: View {
                 .padding(.bottom, 22)
             }
         }
-        .sheet(isPresented: $showChapterList) {
-            ChapterListView(
-                titles: sectionTitles,
-                unitLabel: "章",
-                currentIndex: currentChapterIndex
-            ) { index in
-                currentChapterIndex = index
-                currentUTF16Offset = 0
-                chapterLanding = .start
-                showChapterList = false
-                resetChapterArtifacts()
-            }
-            .frame(minWidth: 380, minHeight: 460)
-        }
         .sheet(isPresented: $showSettings) {
             ReadingSettingsView(
                 fontSize: $fontSize,
@@ -292,6 +322,8 @@ struct MacReaderScreen: View {
             refreshChapterHighlights()
             resetChapterArtifacts()
             Task { await loadChapterSummary() }
+            // Shift the 预译 window (current + next two chapters).
+            startPretranslation()
         }
         .onChange(of: readingMode) { _, newMode in
             // The chapter page clears and re-requests notes for the new
@@ -300,11 +332,15 @@ struct MacReaderScreen: View {
             inlineAIUnavailable = newMode != .original
                 && !AIProviderSettings.load().resolveUsableService()
                     .service.availability.isAvailable
+            startPretranslation()
+        }
+        .onDisappear {
+            pretransTask?.cancel()
         }
     }
 
-    /// Thin status line under the top bar while 双语对照/导读 is active:
-    /// generation progress, or why nothing is appearing.
+    /// Thin status line under the top bar for 导读 progress or an
+    /// unavailable provider (双语对照 reports through the top-bar chip).
     private var inlineModeStatusBar: some View {
         HStack(spacing: 8) {
             if inlineAIUnavailable {
@@ -313,12 +349,10 @@ struct MacReaderScreen: View {
             } else if !inlineInFlight.isEmpty {
                 ProgressView()
                     .controlSize(.small)
-                Text(readingMode == .bilingual ? "正在逐段翻译本页…" : "正在逐段生成导读…")
+                Text("正在逐段生成导读…")
                     .foregroundStyle(palette.ink3)
             } else {
-                Text(readingMode == .bilingual
-                    ? "双语对照 · 中文随阅读逐段展开"
-                    : "导读 · 朱批随阅读逐段展开")
+                Text("导读 · 朱批随阅读逐段展开")
                     .foregroundStyle(palette.ink3)
             }
             Spacer()
@@ -760,6 +794,24 @@ struct MacReaderScreen: View {
             }
             .buttonStyle(.plain)
 
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isTocOpen.toggle()
+                }
+            } label: {
+                Text("☰ 目录")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isTocOpen ? palette.accent : palette.ink3)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        isTocOpen ? palette.accentSoft : .clear,
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(epub.metadata.title)
                     .font(.system(size: 15, weight: .bold, design: .serif))
@@ -781,6 +833,16 @@ struct MacReaderScreen: View {
                 ],
                 selection: $readingMode
             )
+
+            if readingMode == .bilingual, let chip = translationCacheChip {
+                Text(chip)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+                    .lineLimit(1)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(palette.accentSoft, in: Capsule())
+            }
 
             Button(action: onOpenVocab) {
                 Text("生词本 \(vocabEntries.count)")
@@ -806,8 +868,6 @@ struct MacReaderScreen: View {
             }
             .buttonStyle(.plain)
 
-            pillButton("目录") { showChapterList = true }
-
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isCompanionOpen.toggle()
@@ -827,6 +887,19 @@ struct MacReaderScreen: View {
         }
         .padding(.horizontal, 24)
         .frame(height: 58)
+    }
+
+    /// "✓ 本章译文已缓存 · 翻页零等待" once the chapter is fully cached;
+    /// progress while the pretranslator is working on it.
+    private var translationCacheChip: String? {
+        if currentChapterRecord?.pretranslatedAt != nil {
+            return "✓ 本章译文已缓存 · 翻页零等待"
+        }
+        if case .translating(let done, let total) = pretransProgress[currentChapterIndex],
+           total > 0 {
+            return "⟳ 预译中 \(Int(Double(done) / Double(total) * 100))% · 翻页不等待"
+        }
+        return nil
     }
 
     private func pillButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -1056,17 +1129,27 @@ struct MacReaderScreen: View {
 
     // MARK: Inline notes (双语对照 / 导读)
 
+    static let bilingualPrompt =
+        "Translate this paragraph into natural, literary Simplified Chinese. Output only the translation, nothing else."
+    static let companionPrompt =
+        "用平实的现代中文把这段话的意思讲清楚,保留关键意象与语气,不超过三句。只输出导读文本。"
+
     private func inlineKey(_ mode: MacReadingMode, _ chapter: Int, _ idx: Int) -> String {
         "\(mode.rawValue)|\(chapter)|\(idx)"
     }
 
+    private var translationKind: TranslationKind {
+        readingMode == .companion ? .companion : .bilingual
+    }
+
     /// Called whenever the chapter page reports the paragraphs the reader
-    /// is looking at: replays cached notes instantly and translates the
-    /// missing ones, in reading order.
+    /// is looking at. Resolution order: in-memory → persistent cache
+    /// (instant, the 「不重复翻译」 rule) → AI, in reading order.
     private func handleVisibleParagraphs(_ paragraphs: [ReaderParagraph]) {
         guard readingMode != .original else { return }
         let mode = readingMode
         let chapter = currentChapterIndex
+        let store = TranslationStore(modelContext: modelContext)
         var missing: [ReaderParagraph] = []
         for paragraph in paragraphs {
             let key = inlineKey(mode, chapter, paragraph.idx)
@@ -1074,6 +1157,15 @@ struct MacReaderScreen: View {
                 if !cached.isEmpty,
                    !inlineNotes.contains(where: { $0.idx == paragraph.idx }) {
                     inlineNotes.append(InlineNotePaint(idx: paragraph.idx, text: cached))
+                }
+            } else if let persisted = store.lookup(
+                bookID: book.id,
+                kind: translationKind,
+                text: paragraph.text
+            ) {
+                inlineCache[key] = persisted
+                if !inlineNotes.contains(where: { $0.idx == paragraph.idx }) {
+                    inlineNotes.append(InlineNotePaint(idx: paragraph.idx, text: persisted))
                 }
             } else if !inlineInFlight.contains(key) {
                 inlineInFlight.insert(key)
@@ -1096,9 +1188,8 @@ struct MacReaderScreen: View {
             }
             return
         }
-        let question = mode == .bilingual
-            ? "Translate this paragraph into natural, literary Simplified Chinese. Output only the translation, nothing else."
-            : "用平实的现代中文把这段话的意思讲清楚,保留关键意象与语气,不超过三句。只输出导读文本。"
+        let question = mode == .bilingual ? Self.bilingualPrompt : Self.companionPrompt
+        let kind: TranslationKind = mode == .companion ? .companion : .bilingual
         for paragraph in paragraphs {
             let key = inlineKey(mode, chapter, paragraph.idx)
             defer { inlineInFlight.remove(key) }
@@ -1111,14 +1202,116 @@ struct MacReaderScreen: View {
                 )
                 let text = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 inlineCache[key] = text
+                if !text.isEmpty {
+                    TranslationStore(modelContext: modelContext).store(
+                        text,
+                        bookID: book.id,
+                        chapterIndex: chapter,
+                        kind: kind,
+                        text: paragraph.text
+                    )
+                    cacheStatsTick += 1
+                }
                 if readingMode == mode, currentChapterIndex == chapter, !text.isEmpty {
                     inlineNotes.append(InlineNotePaint(idx: paragraph.idx, text: text))
                 }
             } catch {
-                // Cache the failure so a flaky provider isn't re-polled on
-                // every page turn.
+                // Remember the failure in memory only, so a flaky provider
+                // isn't re-polled on every page turn but a fresh visit
+                // retries.
                 inlineCache[key] = ""
             }
+        }
+    }
+
+    // MARK: 预译 (pre-translation, never blocking)
+
+    /// Pre-translates the current and next two chapters (plus chapter
+    /// titles for the bilingual TOC) into the persistent cache while the
+    /// reader is in 双语对照 — the prototype's 「预译 + 永不阻塞」.
+    private func startPretranslation() {
+        pretransTask?.cancel()
+        pretransProgress = [:]
+        guard readingMode == .bilingual, epubBook != nil else { return }
+        let chapter = currentChapterIndex
+        pretransTask = Task { await pretranslate(from: chapter) }
+    }
+
+    private func pretranslate(from startChapter: Int) async {
+        let resolution = AIProviderSettings.load().resolveUsableService()
+        guard resolution.service.availability.isAvailable else { return }
+        let store = TranslationStore(modelContext: modelContext)
+        let bookID = book.id
+        let chapters = (try? modelContext.fetch(
+            FetchDescriptor<Chapter>(
+                predicate: #Predicate { $0.bookID == bookID },
+                sortBy: [SortDescriptor(\.index)]
+            )
+        )) ?? []
+
+        // Chapter titles first — they make the TOC bilingual and cost
+        // almost nothing.
+        for chapter in chapters.prefix(50) {
+            guard !Task.isCancelled, readingMode == .bilingual else { return }
+            guard let title = chapter.title,
+                  !title.isEmpty,
+                  tocTitleTranslations[chapter.index] == nil else { continue }
+            if let cached = store.lookup(bookID: bookID, kind: .title, text: title) {
+                tocTitleTranslations[chapter.index] = cached
+                continue
+            }
+            guard let answer = try? await resolution.service.answer(
+                question: "Translate this chapter title into concise Simplified Chinese. Output only the translation.",
+                groundedIn: [GroundedPassage(id: 0, text: title)]
+            ) else { continue }
+            let text = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            store.store(text, bookID: bookID, chapterIndex: chapter.index, kind: .title, text: title)
+            tocTitleTranslations[chapter.index] = text
+        }
+
+        // Then paragraphs of the reading window.
+        let window = chapters.filter {
+            $0.index >= startChapter && $0.index < startChapter + 3
+        }
+        for chapter in window where chapter.pretranslatedAt == nil {
+            pretransProgress[chapter.index] = .queued
+        }
+        for chapter in window {
+            guard !Task.isCancelled, readingMode == .bilingual else { return }
+            guard chapter.pretranslatedAt == nil else { continue }
+            let paragraphs = TranslationStore.paragraphs(in: chapter.text)
+            guard !paragraphs.isEmpty else {
+                chapter.pretranslatedAt = Date()
+                try? modelContext.save()
+                continue
+            }
+            var done = 0
+            pretransProgress[chapter.index] = .translating(done: 0, total: paragraphs.count)
+            for paragraph in paragraphs {
+                guard !Task.isCancelled, readingMode == .bilingual else { return }
+                if store.lookup(bookID: bookID, kind: .bilingual, text: paragraph) == nil {
+                    guard let answer = try? await resolution.service.answer(
+                        question: Self.bilingualPrompt,
+                        groundedIn: [GroundedPassage(id: 0, text: paragraph)]
+                    ) else { continue }
+                    let text = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { continue }
+                    store.store(
+                        text,
+                        bookID: bookID,
+                        chapterIndex: chapter.index,
+                        kind: .bilingual,
+                        text: paragraph
+                    )
+                }
+                done += 1
+                pretransProgress[chapter.index] = .translating(done: done, total: paragraphs.count)
+            }
+            chapter.pretranslatedAt = Date()
+            try? modelContext.save()
+            pretransProgress[chapter.index] = nil
+            cacheStatsTick += 1
         }
     }
 
@@ -1294,6 +1487,7 @@ struct MacReaderScreen: View {
                 }
                 isLoading = false
                 startSession()
+                startPretranslation()
                 await loadChapterSummary()
             } catch {
                 loadError = error.localizedDescription
@@ -1378,6 +1572,276 @@ struct MacReaderScreen: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 章节目录 (TOC panel)
+
+/// The prototype's in-reader TOC: roman numerals, bilingual chapter
+/// titles, per-chapter reading progress / 朱批 count / estimated length,
+/// the chapter's 预译 state, and the whole-book translation-cache footer.
+private struct MacTOCPanel: View {
+    let bookTitle: String
+    let titles: [String]
+    let cnTitles: [Int: String]
+    let currentIndex: Int
+    let intraChapterFraction: Double
+    let progressByChapter: [Int: MacChapterTransStatus]
+    /// Changing this re-fetches cache statistics.
+    let statsTick: Int
+    let book: Book
+    var onSelect: (Int) -> Void
+    var onClose: () -> Void
+
+    @Environment(\.emptyPalette) private var palette
+    @Environment(\.modelContext) private var modelContext
+
+    private struct ChapterFacts {
+        var utf16Length = 0
+        var pretranslated = false
+        var cachedCount = 0
+        var highlightCount = 0
+    }
+
+    @State private var facts: [Int: ChapterFacts] = [:]
+    @State private var footprint: (count: Int, bytes: Int) = (0, 0)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("目录")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                Text("\(bookTitle) · \(titles.count) 章")
+                    .font(.system(size: 11))
+                    .foregroundStyle(palette.ink3)
+                    .lineLimit(1)
+                Spacer()
+                Button(action: onClose) {
+                    Text("×")
+                        .font(.system(size: 14))
+                        .foregroundStyle(palette.ink3)
+                        .padding(2)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(EdgeInsets(top: 16, leading: 18, bottom: 10, trailing: 14))
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
+                            row(index: index, title: title)
+                                .id(index)
+                        }
+                    }
+                    .padding(EdgeInsets(top: 2, leading: 10, bottom: 10, trailing: 10))
+                }
+                .onAppear {
+                    proxy.scrollTo(currentIndex, anchor: .center)
+                }
+            }
+
+            footer
+        }
+        .background(palette.side)
+        .task(id: statsTick) {
+            refreshFacts()
+        }
+    }
+
+    private func row(index: Int, title: String) -> some View {
+        let isCurrent = index == currentIndex
+        let chapterFacts = facts[index] ?? ChapterFacts()
+        let display = title.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "第 \(index + 1) 章"
+            : title
+        return Button {
+            onSelect(index)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
+                    Text(RomanNumeral.format(index + 1))
+                        .font(.system(size: 11, design: .serif))
+                        .italic()
+                        .foregroundStyle(isCurrent ? palette.accent : palette.ink3)
+                        .frame(width: 22, alignment: .leading)
+                    Text(display)
+                        .font(.system(size: 13, weight: .bold, design: .serif))
+                        .foregroundStyle(isCurrent ? palette.accent : palette.ink)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                HStack(spacing: 9) {
+                    Spacer().frame(width: 22)
+                    if let cn = cnTitles[index] {
+                        Text(cn)
+                            .font(.system(size: 11, design: .serif))
+                            .foregroundStyle(palette.ink3)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    transChip(index: index, facts: chapterFacts)
+                }
+                HStack(spacing: 9) {
+                    Spacer().frame(width: 22)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(palette.line)
+                            Capsule()
+                                .fill(palette.accent)
+                                .frame(width: geo.size.width * progressFraction(index: index))
+                        }
+                    }
+                    .frame(height: 3)
+                    Text(metaLine(index: index, facts: chapterFacts))
+                        .font(.system(size: 10))
+                        .foregroundStyle(palette.ink3)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+            }
+            .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+            .background(
+                isCurrent ? palette.accentSoft : .clear,
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func transChip(index: Int, facts chapterFacts: ChapterFacts) -> some View {
+        if chapterFacts.pretranslated {
+            Text("✓ 已缓存")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(palette.accent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(palette.accentSoft, in: Capsule())
+        } else if case .translating(let done, let total) = progressByChapter[index], total > 0 {
+            Text("⟳ 预译 \(Int(Double(done) / Double(total) * 100))%")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(palette.accent)
+        } else if progressByChapter[index] == .queued {
+            Text("排队中")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.ink3)
+        } else if chapterFacts.cachedCount > 0 {
+            Text("部分缓存")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.ink3)
+        } else {
+            Text("未译")
+                .font(.system(size: 10))
+                .foregroundStyle(palette.ink3)
+        }
+    }
+
+    private func progressFraction(index: Int) -> CGFloat {
+        if index < currentIndex { return 1 }
+        if index == currentIndex { return CGFloat(min(max(intraChapterFraction, 0), 1)) }
+        return 0
+    }
+
+    private func metaLine(index: Int, facts chapterFacts: ChapterFacts) -> String {
+        if index < currentIndex {
+            return chapterFacts.highlightCount > 0
+                ? "已读完 · 朱批 \(chapterFacts.highlightCount)"
+                : "已读完"
+        }
+        if index == currentIndex {
+            let percent = "\(Int((intraChapterFraction * 100).rounded()))%"
+            return chapterFacts.highlightCount > 0
+                ? "\(percent) · 朱批 \(chapterFacts.highlightCount)"
+                : percent
+        }
+        let minutes = ReadingTimeEstimate.minutes(
+            utf16Length: chapterFacts.utf16Length,
+            languageTag: book.languageTag
+        )
+        return minutes > 0 ? "约 \(minutes) 分钟" : "—"
+    }
+
+    private var footer: some View {
+        let pretranslated = facts.values.count { $0.pretranslated }
+        let fraction = titles.isEmpty ? 0 : Double(pretranslated) / Double(titles.count)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("全书预译")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                Spacer()
+                Text("\(Int((fraction * 100).rounded()))% · \(Self.byteLabel(footprint.bytes))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(palette.line)
+                    Capsule()
+                        .fill(palette.accent)
+                        .frame(width: geo.size.width * CGFloat(fraction))
+                }
+            }
+            .frame(height: 4)
+            .padding(.top, 7)
+            Text("译文缓存在本机,离线可读、不重复翻译。阅读时自动预译后两章。")
+                .font(.system(size: 10.5))
+                .lineSpacing(4)
+                .foregroundStyle(palette.ink3)
+                .padding(.top, 8)
+        }
+        .padding(EdgeInsets(top: 12, leading: 16, bottom: 14, trailing: 16))
+        .overlay(alignment: .top) {
+            Rectangle().fill(palette.line).frame(height: 1)
+        }
+    }
+
+    private static func byteLabel(_ bytes: Int) -> String {
+        if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+        }
+        if bytes >= 1_024 {
+            return "\(bytes / 1_024) KB"
+        }
+        return "\(bytes) B"
+    }
+
+    private func refreshFacts() {
+        let bookID = book.id
+        let store = TranslationStore(modelContext: modelContext)
+        let chapters = (try? modelContext.fetch(
+            FetchDescriptor<Chapter>(
+                predicate: #Predicate { $0.bookID == bookID },
+                sortBy: [SortDescriptor(\.index)]
+            )
+        )) ?? []
+        let highlights = (try? modelContext.fetch(
+            FetchDescriptor<Highlight>(
+                predicate: #Predicate { $0.book?.id == bookID }
+            )
+        )) ?? []
+        let highlightCounts = Dictionary(grouping: highlights, by: \.chapterIndex)
+            .mapValues(\.count)
+
+        var collected: [Int: ChapterFacts] = [:]
+        for chapter in chapters {
+            collected[chapter.index] = ChapterFacts(
+                utf16Length: chapter.utf16Length,
+                pretranslated: chapter.pretranslatedAt != nil,
+                cachedCount: store.cachedCount(
+                    bookID: bookID,
+                    chapterIndex: chapter.index,
+                    kind: .bilingual
+                ),
+                highlightCount: highlightCounts[chapter.index] ?? 0
+            )
+        }
+        facts = collected
+        footprint = store.bookFootprint(bookID: bookID)
     }
 }
 

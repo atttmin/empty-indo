@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 「预译 + 永不阻塞」 (design round 2, from real reading feedback):
+  - Persistent translation cache (`ParagraphTranslation` +
+    `TranslationStore`, local store): every 双语/导读 paragraph, keyed by
+    a stable text hash — reopening a book never re-translates, 译文
+    renders straight from disk
+  - Background pre-translation: while 双语对照 is on, the Mac reader
+    translates the current and next two chapters (and chapter titles)
+    into the cache; original text always renders first, 译文 streams in
+    behind it
+  - Mac 双语对照 is now the prototype's 左右分栏 parallel text: original
+    left, smaller-serif 译文 right, paragraph-paired with hover
+    highlight, vertical scrolling, blinking-caret "⟳ 预译中" placeholders
+    that never block paging; iOS keeps the stacked layout with a thinner
+    vermilion lead rule
+  - Cache visualization: "✓ 本章译文已缓存 · 翻页零等待" top-bar chip,
+    per-chapter 预译 states in the TOC, and a 全书预译 footer (percent +
+    on-disk size)
+  - ☰ 目录: the Mac EPUB reader's TOC is now an in-reader side panel —
+    roman numerals, bilingual chapter titles, per-chapter reading
+    progress / 朱批 count / estimated minutes / 预译 state, current
+    chapter highlighted
+
+### Added (earlier rounds)
+
 - iOS 随身伴读 aligned with the 02 iOS prototype:
   - 书库 / 阅读 / 卡片 behind a floating capsule tab bar, plus the
     vermilion 朱 button that summons a half-screen AI companion sheet
