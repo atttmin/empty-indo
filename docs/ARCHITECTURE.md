@@ -41,7 +41,9 @@
 
 App 启动经 `AppSession` 读取 `SyncSettings`，再调用 `AppStores.makeContainer(syncMode:ephemeral:)` 构造容器。若选择 `cloudKit` 但容器初始化失败（本机未登录 iCloud、关闭签名的测试环境等），会自动以 `cloudKitDatabase: .none` 重建同一组磁盘 store——应用照常工作，仅不同步。
 
-第三方云路径首发不直接接到 SwiftData live sync，而是通过 `SyncSnapshot` + `FolderBackupProvider` 走“文件夹快照备份 / 恢复”：`SyncSettingsView` 允许用户把同一份 synced-store 中立快照写到任意 Files / File Provider 文件夹（iCloud Drive、Dropbox、OneDrive、Google Drive、SMB / NAS 等）。
+第三方云路径首发不直接接到 SwiftData live sync，而是通过 `SyncSnapshot` provider 壳层落成两条快照路：
+`FolderBackupProvider` 负责 Files / File Provider 文件夹；
+`ServerSnapshotClient` 负责兼容 Empty snapshot API 的 HTTPS server（`GET /v1/health`、`PUT/GET /v1/reader-snapshots/{namespace}/latest`）。
 
 ### Local Store（仅本机）
 

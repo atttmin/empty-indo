@@ -25,9 +25,9 @@ nonisolated enum KeychainError: LocalizedError {
 /// keychain works for both signing styles on macOS; iOS always uses the
 /// data-protection keychain anyway.
 nonisolated enum KeychainStore {
-    private static let service = "davirian.Empty.ai-provider"
+    private static let defaultService = "davirian.Empty.ai-provider"
 
-    static func save(_ secret: String, account: String) throws {
+    static func save(_ secret: String, account: String, service: String = defaultService) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -48,7 +48,7 @@ nonisolated enum KeychainStore {
         guard status == errSecSuccess else { throw KeychainError.status(status) }
     }
 
-    static func read(account: String) -> String? {
+    static func read(account: String, service: String = defaultService) -> String? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -64,7 +64,7 @@ nonisolated enum KeychainStore {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func delete(account: String) {
+    static func delete(account: String, service: String = defaultService) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

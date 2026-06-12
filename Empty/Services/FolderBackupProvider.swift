@@ -30,6 +30,7 @@ nonisolated enum FolderBackupProviderError: LocalizedError {
 
 nonisolated struct FolderBackupProvider {
     static let snapshotFilename = "empty-reader-backup.json"
+
     static var bookmarkCreationOptions: URL.BookmarkCreationOptions {
         #if os(iOS)
         []
@@ -48,23 +49,25 @@ nonisolated struct FolderBackupProvider {
 
     let target: SyncSettings.FolderBackupTarget
 
-    func export(snapshot: SyncSnapshot) throws -> URL {
+    var providerTitle: String { target.displayName }
+
+    func writeSnapshot(_ snapshot: SyncSnapshot) throws -> URL {
         try withResolvedFolder { folderURL in
             let fileURL = folderURL.appending(path: Self.snapshotFilename, directoryHint: .notDirectory)
-            let data = try Self.makeSnapshotEncoder().encode(snapshot)
+            let data = try SyncSnapshotCodec.makeEncoder().encode(snapshot)
             try data.write(to: fileURL, options: .atomic)
             return fileURL
         }
     }
 
-    func restoreLatest() throws -> SyncSnapshot {
+    func readLatestSnapshot() throws -> SyncSnapshot {
         try withResolvedFolder { folderURL in
             let fileURL = folderURL.appending(path: Self.snapshotFilename, directoryHint: .notDirectory)
             guard FileManager.default.fileExists(atPath: fileURL.path()) else {
                 throw FolderBackupProviderError.snapshotMissing
             }
             let data = try Data(contentsOf: fileURL)
-            return try Self.makeSnapshotDecoder().decode(SyncSnapshot.self, from: data)
+            return try SyncSnapshotCodec.makeDecoder().decode(SyncSnapshot.self, from: data)
         }
     }
 
@@ -73,19 +76,6 @@ nonisolated struct FolderBackupProvider {
         guard values.isDirectory == true else {
             throw FolderBackupProviderError.selectedURLIsNotFolder
         }
-    }
-
-    private static func makeSnapshotEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }
-
-    private static func makeSnapshotDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
     }
 
     private func withResolvedFolder<T>(_ body: (URL) throws -> T) throws -> T {
@@ -116,3 +106,17 @@ nonisolated struct FolderBackupProvider {
     }
 }
 
+extension FolderBackupProvider: SyncSnapshotBackupProvider {
+    func export(snapshot: SyncSnapshot) async throws -> SyncBackupReceipt {
+        let fileURL = try writeSnapshot(snapshot)
+        return SyncBackupReceipt(
+            locationDescription: fileURL.lastPathComponent,
+            updatedAt: snapshot.exportedAt,
+            etag: nil
+        )
+    }
+
+    func restoreLatest() async throws -> SyncSnapshot {
+        try readLatestSnapshot()
+    }
+}

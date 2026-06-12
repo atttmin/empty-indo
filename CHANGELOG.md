@@ -189,6 +189,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the synced SwiftData schema can now run in **local-only** or **CloudKit**
   live mode via `SyncLiveMode` / `AppSession`, and a new
   `SyncSettingsView` lets the reader switch modes in-app.
+- Added a compatible HTTPS snapshot client for Empty Cloud / self-hosted
+  servers: `ServerSnapshotClient` speaks `GET /v1/health` plus
+  `PUT/GET /v1/reader-snapshots/{namespace}/latest`, and the sync settings
+  panel can now save a server target, test connectivity, upload the latest
+  reader snapshot, and restore it back with the same merge/upsert semantics.
 - Added provider-neutral `SyncSnapshot` capture / merge plus a first
   third-party-cloud path: `FolderBackupProvider` writes and restores reader
   snapshots from any Files / File Provider folder (iCloud Drive, Dropbox,

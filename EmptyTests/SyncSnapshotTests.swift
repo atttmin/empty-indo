@@ -128,10 +128,10 @@ struct SyncSnapshotTests {
             target: .init(bookmarkData: bookmark, displayName: "tmp", lastSnapshotAt: nil)
         )
 
-        let fileURL = try provider.export(snapshot: snapshot)
+        let fileURL = try provider.writeSnapshot(snapshot)
         #expect(fileURL.lastPathComponent == FolderBackupProvider.snapshotFilename)
 
-        let restored = try provider.restoreLatest()
+        let restored = try provider.readLatestSnapshot()
         #expect(restored.schemaVersion == snapshot.schemaVersion)
         #expect(abs(restored.exportedAt.timeIntervalSince(snapshot.exportedAt)) < 1)
         #expect(restored.books.count == 1)

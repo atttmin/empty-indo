@@ -6,6 +6,21 @@
 import Foundation
 import SwiftData
 
+nonisolated enum SyncSnapshotCodec {
+    static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
 nonisolated struct SyncSnapshot: Codable, Equatable, Sendable {
     static let currentSchemaVersion = 1
 

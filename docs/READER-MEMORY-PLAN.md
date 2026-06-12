@@ -259,7 +259,7 @@ case saveMemory(title: String, body: String, tags: [String])
 | 任务 ID | 内容 | 状态 |
 |---------|------|------|
 | P3-1 | Synced Store 支持 local / CloudKit live provider | 已实现：`SyncLiveMode` + `AppSession` 驱动容器切换 |
-| P3-2 | 文件夹快照备份 / 恢复（第三方云第一阶段） | 已实现：`SyncSnapshot` + `FolderBackupProvider` + `SyncSettingsView` |
+| P3-2 | 文件夹 / HTTPS server 快照备份壳层（第三方云第一阶段） | 已实现：`SyncSnapshot` + `FolderBackupProvider` + `ServerSnapshotClient` + `SyncSettingsView` |
 | P3-3 | Passkey 或 Sign in with Apple 作为「记忆容器」账号 | 未实现：待自建 relay / Empty Cloud 契约 |
 
 ### Phase 3+ — Walrus Memory 可选便携层（见 §7.5，非默认）

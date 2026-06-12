@@ -10,6 +10,8 @@ import SwiftUI
 
 @MainActor
 final class AppSession: ObservableObject {
+    private static let syncCredentialService = "davirian.Empty.sync-provider"
+
     @Published private(set) var container: ModelContainer
     @Published private(set) var syncSettings: SyncSettings
     @Published private(set) var containerRevision = UUID()
@@ -39,6 +41,13 @@ final class AppSession: ObservableObject {
         isEphemeral ? .localOnly : syncSettings.liveMode
     }
 
+    var serverAuthToken: String {
+        KeychainStore.read(
+            account: SyncSettings.serverTokenAccount,
+            service: Self.syncCredentialService
+        ) ?? ""
+    }
+
     func setLiveMode(_ mode: SyncLiveMode) throws {
         guard !isEphemeral else { return }
         guard syncSettings.liveMode != mode else { return }
@@ -65,15 +74,13 @@ final class AppSession: ObservableObject {
             displayName: displayName,
             lastSnapshotAt: updated.folderTarget?.lastSnapshotAt
         )
-        updated.save()
-        syncSettings = updated
+        persist(updated)
     }
 
     func clearBackupFolder() {
         var updated = syncSettings
         updated.folderTarget = nil
-        updated.save()
-        syncSettings = updated
+        persist(updated)
     }
 
     func markBackupCompleted(at date: Date = Date()) {
@@ -81,7 +88,88 @@ final class AppSession: ObservableObject {
         target.lastSnapshotAt = date
         var updated = syncSettings
         updated.folderTarget = target
-        updated.save()
-        syncSettings = updated
+        persist(updated)
+    }
+
+    func saveServerTarget(baseURLString: String, namespace: String, authToken: String) throws {
+        let trimmedToken = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let authMode: ServerAuthMode = trimmedToken.isEmpty ? .none : .bearer
+        let configuration = ServerSnapshotClient.Configuration(
+            baseURLString: baseURLString,
+            namespace: namespace,
+            authMode: authMode,
+            bearerToken: trimmedToken
+        )
+        let normalizedBaseURL = try configuration.normalizedBaseURL().absoluteString
+        let normalizedNamespace = try configuration.normalizedNamespace()
+
+        if trimmedToken.isEmpty {
+            KeychainStore.delete(
+                account: SyncSettings.serverTokenAccount,
+                service: Self.syncCredentialService
+            )
+        } else {
+            try KeychainStore.save(
+                trimmedToken,
+                account: SyncSettings.serverTokenAccount,
+                service: Self.syncCredentialService
+            )
+        }
+
+        let previous = syncSettings.serverTarget
+        var updated = syncSettings
+        updated.serverTarget = .init(
+            baseURLString: normalizedBaseURL,
+            namespace: normalizedNamespace,
+            authMode: authMode,
+            lastSnapshotAt: previous?.lastSnapshotAt,
+            lastValidatedAt: previous?.lastValidatedAt
+        )
+        persist(updated)
+    }
+
+    func clearServerTarget() {
+        KeychainStore.delete(
+            account: SyncSettings.serverTokenAccount,
+            service: Self.syncCredentialService
+        )
+        var updated = syncSettings
+        updated.serverTarget = nil
+        persist(updated)
+    }
+
+    func markServerValidated(at date: Date = Date()) {
+        guard var target = syncSettings.serverTarget else { return }
+        target.lastValidatedAt = date
+        var updated = syncSettings
+        updated.serverTarget = target
+        persist(updated)
+    }
+
+    func markServerBackupCompleted(at date: Date = Date()) {
+        guard var target = syncSettings.serverTarget else { return }
+        target.lastSnapshotAt = date
+        var updated = syncSettings
+        updated.serverTarget = target
+        persist(updated)
+    }
+
+    func makeServerSnapshotClient() throws -> ServerSnapshotClient {
+        guard let target = syncSettings.serverTarget else {
+            throw ServerSnapshotClientError.providerError("先保存一个 Empty Cloud / 自建 Server 目标。")
+        }
+        return ServerSnapshotClient(
+            configuration: .init(
+                baseURLString: target.baseURLString,
+                namespace: target.namespace,
+                authMode: target.authMode,
+                bearerToken: serverAuthToken
+            )
+        )
+    }
+
+    private func persist(_ settings: SyncSettings) {
+        settings.save()
+        syncSettings = settings
     }
 }

@@ -18,6 +18,10 @@ struct SyncSettingsView: View {
     @State private var statusMessage: String?
     @State private var errorMessage: String?
     @State private var confirmRestore = false
+    @State private var confirmServerRestore = false
+    @State private var serverBaseURL = ""
+    @State private var serverNamespace = "default"
+    @State private var serverToken = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,6 +32,7 @@ struct SyncSettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     liveSyncSection
                     folderBackupSection
+                    serverBackupSection
                     roadmapSection
                     if let statusMessage {
                         Text(statusMessage)
@@ -42,6 +47,7 @@ struct SyncSettingsView: View {
             }
         }
         .background(palette.window)
+        .onAppear(perform: loadServerDraft)
         .fileImporter(
             isPresented: $isPickingFolder,
             allowedContentTypes: [.folder],
@@ -54,11 +60,23 @@ struct SyncSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("恢复", role: .destructive) {
-                restoreLatestSnapshot()
+                restoreFromFolder()
             }
             Button("取消", role: .cancel) {}
         } message: {
             Text("恢复只会 merge / upsert 已备份的读者数据，不会导入正文、chunk 或 embedding。")
+        }
+        .confirmationDialog(
+            "从 server 恢复这个命名空间的最新读者快照？",
+            isPresented: $confirmServerRestore,
+            titleVisibility: .visible
+        ) {
+            Button("恢复", role: .destructive) {
+                restoreFromServer()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("server 恢复同样只 merge / upsert 读者数据；正文、chunk、译文缓存与 embedding 仍留在本机。")
         }
         .alert(
             "出了点问题",
@@ -185,7 +203,7 @@ struct SyncSettingsView: View {
                         }
                         HStack(spacing: 8) {
                             actionButton("更换文件夹") { isPickingFolder = true }
-                            actionButton(isBusy ? "备份中…" : "立即备份") { backupSnapshot() }
+                            actionButton(isBusy ? "备份中…" : "立即备份") { backupToFolder() }
                                 .disabled(isBusy)
                             actionButton(isBusy ? "恢复中…" : "恢复最新备份") { confirmRestore = true }
                                 .disabled(isBusy)
@@ -213,18 +231,136 @@ struct SyncSettingsView: View {
         }
     }
 
+    private var serverBackupSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Empty Cloud / 自建 Server")
+                .font(.system(size: 12, weight: .bold))
+                .kerning(1.4)
+                .foregroundStyle(palette.ink3)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("这一层先走 snapshot API：你可以把读者快照推到兼容的 HTTPS 服务，再从同一 namespace 拉回。它不是 live sync mode，所以不会把没有后端契约的 server 伪装成实时同步。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(palette.ink2)
+                VStack(alignment: .leading, spacing: 8) {
+                    labeledField("Base URL", placeholder: "https://sync.example.com", text: $serverBaseURL)
+                    labeledField("Namespace", placeholder: "default", text: $serverNamespace)
+                    labeledSecureField("Bearer Token（可留空）", placeholder: "token-…", text: $serverToken)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .emptyCard(palette, radius: 12)
+
+                if let target = appSession.syncSettings.serverTarget {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("已保存目标 · \(target.displayName) / \(target.namespace)")
+                            .font(.system(size: 12.5, weight: .bold))
+                            .foregroundStyle(palette.ink)
+                        Text("鉴权 · \(target.authMode.title)")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(palette.ink3)
+                        if let lastValidatedAt = target.lastValidatedAt {
+                            Text("上次联通性检查 · \(lastValidatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(palette.ink3)
+                        }
+                        if let lastSnapshotAt = target.lastSnapshotAt {
+                            Text("上次 server 备份 · \(lastSnapshotAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(palette.ink3)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .emptyCard(palette, radius: 12)
+                }
+
+                HStack(spacing: 8) {
+                    actionButton("保存目标") { saveServerTarget() }
+                        .disabled(isBusy)
+                    actionButton(isBusy ? "检查中…" : "测试连接") { testServerConnection() }
+                        .disabled(isBusy)
+                    actionButton(isBusy ? "上传中…" : "上传快照") { backupToServer() }
+                        .disabled(isBusy)
+                    actionButton(isBusy ? "恢复中…" : "恢复最新") { confirmServerRestore = true }
+                        .disabled(isBusy)
+                }
+                Button(role: .destructive) {
+                    appSession.clearServerTarget()
+                    serverToken = ""
+                    statusMessage = "已移除 server 目标。"
+                } label: {
+                    Text("移除 server 目标")
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                Text("协议固定为 `GET /v1/health` 与 `PUT/GET /v1/reader-snapshots/{namespace}/latest`。若 token 留空，则按无鉴权 server 处理；若填入 token，则走 `Authorization: Bearer …`。")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(palette.ink3)
+            }
+        }
+    }
+
     private var roadmapSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("后续 provider")
                 .font(.system(size: 12, weight: .bold))
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
-            Text("下一步会在同一套快照 / provider 边界上接 Empty Cloud / 自建 server；Passkey 先做账号登录，Walrus 先做可选导出 / 备份层，不把钱包与存储绑死。")
+            Text("下一步会在同一套快照 / provider 边界上接真正的 Empty Cloud live sync；Passkey 先做账号登录与密钥封装层，Walrus 仍保持可选导出 / 备份，不把钱包与存储绑死。")
                 .font(.system(size: 11.5))
                 .foregroundStyle(palette.ink2)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .emptyCard(palette, radius: 12)
+        }
+    }
+
+    private func labeledField(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(palette.ink3)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(palette.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(palette.side)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(palette.line, lineWidth: 1)
+                        )
+                )
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+        }
+    }
+
+    private func labeledSecureField(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(palette.ink3)
+            SecureField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(palette.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(palette.side)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(palette.line, lineWidth: 1)
+                        )
+                )
         }
     }
 
@@ -253,6 +389,14 @@ struct SyncSettingsView: View {
         }
     }
 
+    private func loadServerDraft() {
+        if let target = appSession.syncSettings.serverTarget {
+            serverBaseURL = target.baseURLString
+            serverNamespace = target.namespace
+        }
+        serverToken = appSession.serverAuthToken
+    }
+
     private func handleFolderPick(_ result: Result<[URL], Error>) {
         do {
             let urls = try result.get()
@@ -264,36 +408,93 @@ struct SyncSettingsView: View {
         }
     }
 
-    private func backupSnapshot() {
-        guard let target = appSession.syncSettings.folderTarget else {
-            errorMessage = FolderBackupProviderError.noFolderConfigured.localizedDescription
-            return
-        }
-        isBusy = true
-        defer { isBusy = false }
+    private func saveServerTarget() {
         do {
-            let snapshot = try SyncSnapshot.capture(from: modelContext)
-            let fileURL = try FolderBackupProvider(target: target).export(snapshot: snapshot)
-            appSession.markBackupCompleted(at: snapshot.exportedAt)
-            statusMessage = "已写入 \(fileURL.lastPathComponent)。"
+            try appSession.saveServerTarget(
+                baseURLString: serverBaseURL,
+                namespace: serverNamespace,
+                authToken: serverToken
+            )
+            loadServerDraft()
+            statusMessage = "已保存 server 目标。"
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func restoreLatestSnapshot() {
+    private func backupToFolder() {
         guard let target = appSession.syncSettings.folderTarget else {
             errorMessage = FolderBackupProviderError.noFolderConfigured.localizedDescription
             return
         }
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let snapshot = try FolderBackupProvider(target: target).restoreLatest()
+        runBusyTask {
+            let snapshot = try SyncSnapshot.capture(from: modelContext)
+            let receipt = try await FolderBackupProvider(target: target).export(snapshot: snapshot)
+            appSession.markBackupCompleted(at: receipt.updatedAt ?? snapshot.exportedAt)
+            return "已写入 \(receipt.locationDescription)。"
+        }
+    }
+
+    private func restoreFromFolder() {
+        guard let target = appSession.syncSettings.folderTarget else {
+            errorMessage = FolderBackupProviderError.noFolderConfigured.localizedDescription
+            return
+        }
+        runBusyTask {
+            let snapshot = try await FolderBackupProvider(target: target).restoreLatest()
             try snapshot.merge(into: modelContext)
-            statusMessage = "已把快照合并回当前书库。"
-        } catch {
-            errorMessage = error.localizedDescription
+            return "已把文件夹快照合并回当前书库。"
+        }
+    }
+
+    private func testServerConnection() {
+        runBusyTask {
+            let client = try makeCurrentServerClient()
+            let health = try await client.healthCheck()
+            appSession.markServerValidated()
+            let service = health.service ?? "server"
+            let status = health.status ?? "ok"
+            return "连接通过：\(service)（\(status)）。"
+        }
+    }
+
+    private func backupToServer() {
+        runBusyTask {
+            let snapshot = try SyncSnapshot.capture(from: modelContext)
+            let client = try makeCurrentServerClient()
+            let receipt = try await client.export(snapshot: snapshot)
+            appSession.markServerBackupCompleted(at: receipt.updatedAt ?? snapshot.exportedAt)
+            return "已上传到 \(receipt.locationDescription)。"
+        }
+    }
+
+    private func restoreFromServer() {
+        runBusyTask {
+            let snapshot = try await makeCurrentServerClient().restoreLatest()
+            try snapshot.merge(into: modelContext)
+            return "已把 server 快照合并回当前书库。"
+        }
+    }
+
+    private func makeCurrentServerClient() throws -> ServerSnapshotClient {
+        try appSession.saveServerTarget(
+            baseURLString: serverBaseURL,
+            namespace: serverNamespace,
+            authToken: serverToken
+        )
+        loadServerDraft()
+        return try appSession.makeServerSnapshotClient()
+    }
+
+    private func runBusyTask(_ operation: @escaping @MainActor () async throws -> String) {
+        Task { @MainActor in
+            isBusy = true
+            defer { isBusy = false }
+            do {
+                statusMessage = try await operation()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }

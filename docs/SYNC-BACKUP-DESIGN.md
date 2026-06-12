@@ -7,7 +7,7 @@
 1. **保留现有原则**：同步读者数据，不同步书籍正文与本地 embedding。
 2. **把 iCloud 降级为 provider**，而不是写死在 `AppStores` 里。
 3. **先交付用户可用的第三方路径**：用户可选任意系统文件夹（iCloud Drive / Dropbox / OneDrive / Google Drive / SMB / NAS 等）保存快照。
-4. **为后续自建 Empty Cloud / Passkey / Walrus 留接口**，但本阶段不伪造后端。
+4. **为后续自建 Empty Cloud / Passkey / Walrus 留接口**，并先落一个兼容 HTTPS snapshot API 的 server client 壳层。
 
 ---
 
@@ -64,6 +64,7 @@
 首发 provider：
 
 - `folder`
+- `serverSnapshot`
 
 后续 provider：
 
@@ -157,6 +158,34 @@
 - “恢复”是 **merge/upsert**，不删除本地缺失项
 - 冲突策略：**用户主动恢复的快照优先**
 
+
+### C. Empty Cloud / 自建 Server 快照
+
+入口：`SyncSettingsView`
+
+- 填 `Base URL`
+- 填 `Namespace`
+- 可选 `Bearer Token`
+- 保存目标
+- 测试连接（`GET /v1/health`）
+- 上传快照（`PUT /v1/reader-snapshots/{namespace}/latest`）
+- 恢复最新（`GET /v1/reader-snapshots/{namespace}/latest`）
+
+当前语义：
+
+- 这仍是 **snapshot backup / restore**，不是 live sync mode
+- token 留空 = 无鉴权 server
+- token 非空 = `Authorization: Bearer …`
+- 恢复仍然是 **merge/upsert**
+
+### D. HTTP 契约（当前 client 期待）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/v1/health` | 200 即视为可连通；可返回 `{ status, service, features }` |
+| `PUT` | `/v1/reader-snapshots/{namespace}/latest` | 请求体为 `SyncSnapshot` JSON；header 含 `X-Empty-Device`、`X-Empty-Schema-Version` |
+| `GET` | `/v1/reader-snapshots/{namespace}/latest` | 返回 `SyncSnapshot` JSON |
+
 ---
 
 ## 本阶段落地文件
@@ -164,13 +193,17 @@
 ### 新增
 
 - `Empty/Services/SyncSettings.swift`
-  - 存储 live sync provider 与 folder backup target
+  - 存储 live sync provider、folder target、server target
 - `Empty/Services/AppSession.swift`
-  - App 级状态：`ModelContainer`、sync settings、切换 provider、选择文件夹
+  - App 级状态：`ModelContainer`、sync settings、切换 provider、folder/server target 持久化
 - `Empty/Services/SyncSnapshot.swift`
   - provider-neutral snapshot schema、capture / merge
+- `Empty/Services/SyncBackupProvider.swift`
+  - 快照备份 provider 抽象
 - `Empty/Services/FolderBackupProvider.swift`
   - folder bookmark 解析、写入 / 读取快照
+- `Empty/Services/ServerSnapshotClient.swift`
+  - 兼容 Empty snapshot API 的 HTTPS client
 - `Empty/Views/SyncSettingsView.swift`
   - 同步与备份 UI
 
@@ -189,11 +222,11 @@
 
 ## 本阶段不做的事
 
-### Empty Cloud / 自建 server
+### Empty Cloud / 自建 server **live sync**
 
-原因：需要真实后端契约。
+原因：还没有 cursor / delta / 冲突合并的真实后端契约。
 
-预留接口，但不写假 API。
+本阶段只落 **server snapshot client**，不把它伪装成实时同步。
 
 ### Passkey / 账号体系
 
@@ -211,11 +244,12 @@
 
 ## 后续阶段
 
-### Phase 2 — Empty Cloud / Custom Server
+### Phase 2 — Empty Cloud / Custom Server live sync
 
 - `ServerSyncProvider`
 - Passkey 登录
 - 变更 cursor / delta push-pull
+- 冲突合并与设备 tombstone
 - 对象存储放快照与 blob
 
 ### Phase 3 — Passkey + Wallet
@@ -241,6 +275,7 @@
 
 1. 应用能在 **本机 / iCloud** 间切换实时同步模式。
 2. 用户能选择任意系统文件夹作为备份目标。
-3. 用户能把 synced store 导出为快照，并从该快照恢复。
-4. 快照恢复不会引入正文 / chunk / embedding。
-5. 现有单测与平台构建继续通过。
+3. 用户能配置兼容 Empty snapshot API 的 HTTPS server，并测试连接。
+4. 用户能把 synced store 导出为快照，并从文件夹 / server 恢复。
+5. 快照恢复不会引入正文 / chunk / embedding。
+6. 现有单测与平台构建继续通过。
