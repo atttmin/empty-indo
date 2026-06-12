@@ -6,6 +6,7 @@
 
 - [READER-MEMORY-PLAN.md](./READER-MEMORY-PLAN.md) — 读者记忆层、Agent 工具扩展、第三方 Memory 选型
 - [LIBER-PORT-PLAN.md](./LIBER-PORT-PLAN.md) — 从 Liber Web 借鉴的能力（活思维链接、镜片、卡片 fork 等）
+- [SYNC-BACKUP-DESIGN.md](./SYNC-BACKUP-DESIGN.md) — 可插拔同步 / 备份 provider、快照 schema、后续 Passkey / Walrus 分层
 
 ---
 
@@ -22,7 +23,7 @@
 
 定义于 [`Empty/Models/AppStores.swift`](../Empty/Models/AppStores.swift)。
 
-### Synced Store（CloudKit-ready）
+### Synced Store（provider-backed）
 
 | 模型 | 用途 |
 |------|------|
@@ -33,7 +34,14 @@
 | `StudyCardEntry` | 问答卡 / 链接卡 / 复习卡 |
 | `MemoryItem` | ReaderMemory：高亮批注 / 链接卡 / 问答卡 / 主题记忆 |
 
-CloudKit 同步**已启用**（`syncedDatabase = .automatic`，`Empty.entitlements` 含 iCloud capability）。容器初始化失败时（本机未登录 iCloud、关闭签名的测试环境等），自动以 `cloudKitDatabase: .none` 重建同一组磁盘 store——应用照常工作，仅不同步。
+实时同步 provider 由 `SyncLiveMode` 选择：
+
+- `localOnly` — 同一组 synced schema 仅落本机，不接云
+- `cloudKit` — `syncedDatabase = .automatic`，`Empty.entitlements` 含 iCloud capability 时走 CloudKit
+
+App 启动经 `AppSession` 读取 `SyncSettings`，再调用 `AppStores.makeContainer(syncMode:ephemeral:)` 构造容器。若选择 `cloudKit` 但容器初始化失败（本机未登录 iCloud、关闭签名的测试环境等），会自动以 `cloudKitDatabase: .none` 重建同一组磁盘 store——应用照常工作，仅不同步。
+
+第三方云路径首发不直接接到 SwiftData live sync，而是通过 `SyncSnapshot` + `FolderBackupProvider` 走“文件夹快照备份 / 恢复”：`SyncSettingsView` 允许用户把同一份 synced-store 中立快照写到任意 Files / File Provider 文件夹（iCloud Drive、Dropbox、OneDrive、Google Drive、SMB / NAS 等）。
 
 ### Local Store（仅本机）
 
@@ -45,6 +53,7 @@ CloudKit 同步**已启用**（`syncedDatabase = .automatic`，`Empty.entitlemen
 | `MemoryEmbedding` | 本地 `MemoryItem` 语义向量（跨 store 仅按 `itemID` 对应） |
 
 跨 store 关联：**仅通过 `Book.id`（UUID）**，不使用 SwiftData 跨 store relationship。
+快照恢复是 **merge / upsert**：只回放 `Book` / `Highlight` / `ReadingSession` / `VocabEntry` / `StudyCardEntry` / `Bookmark` / `MemoryItem`，不删除本机额外数据，也不导入正文、chunk、译文缓存或 embedding。
 
 ---
 

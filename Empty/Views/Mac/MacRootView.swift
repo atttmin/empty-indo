@@ -127,6 +127,7 @@ private struct MacSidebar: View {
     @Query private var highlights: [Highlight]
 
     @State private var showDiagnostics = false
+    @State private var showSyncSettings = false
 
     private var recentBooks: [Book] {
         Array(books.filter { $0.lastOpenedAt != nil }.prefix(2))
@@ -217,6 +218,9 @@ private struct MacSidebar: View {
                 footerButton("✦ AI 状态") {
                     showDiagnostics = true
                 }
+                footerButton("☁︎ 同步与备份") {
+                    showSyncSettings = true
+                }
             }
             .padding(14)
             .overlay(alignment: .top) {
@@ -226,6 +230,9 @@ private struct MacSidebar: View {
         .background(palette.side)
         .sheet(isPresented: $showDiagnostics) {
             AIDiagnosticsView()
+        }
+        .sheet(isPresented: $showSyncSettings) {
+            SyncSettingsView()
         }
     }
 

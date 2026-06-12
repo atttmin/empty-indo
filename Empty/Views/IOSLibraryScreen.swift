@@ -26,6 +26,7 @@ struct IOSLibraryScreen: View {
 
     @State private var isImporterPresented = false
     @State private var isDiagnosticsPresented = false
+    @State private var isSyncPresented = false
     @State private var isSearching = false
     @State private var showStats = false
     @State private var searchText = ""
@@ -114,6 +115,9 @@ struct IOSLibraryScreen: View {
         .sheet(isPresented: $isDiagnosticsPresented) {
             AIDiagnosticsView()
         }
+        .sheet(isPresented: $isSyncPresented) {
+            SyncSettingsView()
+        }
         .alert(
             "出了点问题",
             isPresented: Binding(
@@ -158,6 +162,16 @@ struct IOSLibraryScreen: View {
             } label: {
                 Text("✦")
                     .font(.system(size: 14))
+                    .foregroundStyle(palette.ink3)
+                    .frame(width: 36, height: 36)
+                    .background(palette.accentSoft.opacity(0.6), in: Circle())
+            }
+            .buttonStyle(.plain)
+            Button {
+                isSyncPresented = true
+            } label: {
+                Image(systemName: "icloud")
+                    .font(.system(size: 13))
                     .foregroundStyle(palette.ink3)
                     .frame(width: 36, height: 36)
                     .background(palette.accentSoft.opacity(0.6), in: Circle())

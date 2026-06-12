@@ -21,12 +21,10 @@ import SwiftData
 /// models across stores, and that constraint is load-bearing: it keeps book
 /// content out of the sync pipeline by construction.
 enum AppStores {
-    /// Flip to `.automatic` after adding the iCloud capability
-    /// (Signing & Capabilities → + iCloud → CloudKit) to turn on sync.
-    /// Until then `.none` keeps behavior identical with or without
-    /// entitlements.
-    /// Set to `.none` to run without an iCloud entitlement (local-only).
-    /// `.automatic` once `Empty.entitlements` is linked in the Xcode target.
+    /// The actual CloudKit-backed database used when the selected live sync
+    /// provider is `.cloudKit`.
+    /// Builds signed without an iCloud entitlement still fall back to `.none`
+    /// at container creation time.
     private static let syncedDatabase = ModelConfiguration.CloudKitDatabase.automatic
 
     static let syncedSchema = Schema([
@@ -70,7 +68,10 @@ enum AppStores {
     ///   the same `/dev/null` pseudo-file, and concurrent containers
     ///   (parallel tests) trip over the shared SQLite locks. Unique temp
     ///   files keep ephemeral containers fully isolated.
-    static func makeContainer(ephemeral: Bool = false) throws -> ModelContainer {
+    static func makeContainer(
+        syncMode: SyncLiveMode = .cloudKit,
+        ephemeral: Bool = false
+    ) throws -> ModelContainer {
         let synced: ModelConfiguration
         let local: ModelConfiguration
         if ephemeral {
@@ -94,7 +95,7 @@ enum AppStores {
                 "Synced",
                 schema: syncedSchema,
                 isStoredInMemoryOnly: false,
-                cloudKitDatabase: syncedDatabase
+                cloudKitDatabase: syncMode == .cloudKit ? syncedDatabase : .none
             )
             local = ModelConfiguration(
                 "Local",
@@ -118,7 +119,7 @@ enum AppStores {
         ])
         do {
             return try ModelContainer(for: allModels, configurations: synced, local)
-        } catch where !ephemeral {
+        } catch where !ephemeral && syncMode == .cloudKit {
             // CloudKit needs a provisioned iCloud entitlement; builds signed
             // without one (CI, ad-hoc dev runs) land here. The same on-disk
             // stores reopen local-only, so data survives and sync resumes on

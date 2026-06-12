@@ -222,7 +222,7 @@ case saveMemory(title: String, body: String, tags: [String])
 
 ### Phase 1 — 本地 ReaderMemory（已实现）
 
-**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory`、旧问答压缩为 `theme`、`ThoughtLinkFinder` 记忆召回路、本地 `MemoryEmbedding` 持久语义路均已落地；伴读主题提炼已有自动 + 手动入口，后续主要剩同步阶段。
+**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory`、旧问答压缩为 `theme`、`ThoughtLinkFinder` 记忆召回路、本地 `MemoryEmbedding` 持久语义路均已落地；伴读主题提炼已有自动 + 手动入口。同步壳层已升级为 **local / iCloud live sync + folder snapshot backup**，后续主要剩账号与自建 provider。
 
 | 任务 ID | 内容 | 验收 |
 |---------|------|------|
@@ -254,13 +254,13 @@ case saveMemory(title: String, body: String, tags: [String])
 | P2-2 | 伴读结束时可选提炼主题（仅 cloud / 本机 FM） | 已实现基础版：Mac / iOS 伴读可手动「提炼本轮主题」，连续有效问答后也会自动提出 `theme` 草案 |
 | P2-3 | 记忆压缩：旧 `companionQA` 合并为 `theme` | 已实现：手动压缩入口 + 旧问答退出 recall，仅保留派生 `theme` |
 
-### Phase 3 — 跨设备同步与账号
+### Phase 3 — 跨设备同步与账号（部分实现）
 
-| 任务 ID | 内容 | 验收 |
+| 任务 ID | 内容 | 状态 |
 |---------|------|------|
-| P3-1 | 启用 CloudKit on Synced Store | `MemoryItem` 跨设备可见 |
-| P3-2 | Passkey 或 Sign in with Apple 作为「记忆容器」账号 | 与 CloudKit 或自建 relay 二选一 |
-| P3-3 | 加密导出/备份（可选） | 用户持密钥 |
+| P3-1 | Synced Store 支持 local / CloudKit live provider | 已实现：`SyncLiveMode` + `AppSession` 驱动容器切换 |
+| P3-2 | 文件夹快照备份 / 恢复（第三方云第一阶段） | 已实现：`SyncSnapshot` + `FolderBackupProvider` + `SyncSettingsView` |
+| P3-3 | Passkey 或 Sign in with Apple 作为「记忆容器」账号 | 未实现：待自建 relay / Empty Cloud 契约 |
 
 ### Phase 3+ — Walrus Memory 可选便携层（见 §7.5，非默认）
 

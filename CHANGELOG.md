@@ -185,6 +185,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the UI smoke suite now exercises the native highlight sheet / jump-back
   flow on both macOS and iOS.
 
+- Added a pluggable sync shell around the existing dual-store architecture:
+  the synced SwiftData schema can now run in **local-only** or **CloudKit**
+  live mode via `SyncLiveMode` / `AppSession`, and a new
+  `SyncSettingsView` lets the reader switch modes in-app.
+- Added provider-neutral `SyncSnapshot` capture / merge plus a first
+  third-party-cloud path: `FolderBackupProvider` writes and restores reader
+  snapshots from any Files / File Provider folder (iCloud Drive, Dropbox,
+  OneDrive, Google Drive, SMB / NAS, etc.) without syncing book正文、
+  chunks, translation cache, or embeddings.
+
 ### Added (earlier rounds)
 
 - iOS 随身伴读 aligned with the 02 iOS prototype:

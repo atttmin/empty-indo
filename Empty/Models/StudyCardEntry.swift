@@ -8,7 +8,7 @@ import SwiftData
 
 /// What kind of card a `StudyCardEntry` is — the prototype's 复习卡 /
 /// 问答卡 / 链接卡. Stored raw so CloudKit records stay plain strings.
-nonisolated enum StudyCardKind: String, CaseIterable, Sendable {
+nonisolated enum StudyCardKind: String, Codable, CaseIterable, Sendable {
     /// Spaced-repetition Q&A generated from a highlight (复习卡).
     case review
     /// A companion-chat exchange the reader chose to keep (问答卡).
