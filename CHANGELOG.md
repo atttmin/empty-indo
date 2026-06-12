@@ -200,6 +200,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OneDrive, Google Drive, SMB / NAS, etc.) without syncing book正文、
   chunks, translation cache, or embeddings.
 
+- Added the next live-sync layer without falsely enabling it: the client now
+  owns a provider-neutral delta contract (`ReaderLiveSyncDelta`,
+  `LiveSyncCursor`, tombstones, pull / push request-response types) plus
+  `CloudKitLiveSyncProvider` / `ServerLiveSyncProvider` status probes.
+- Added `ServerLiveSyncClient` as the future Empty Cloud delta client for
+  `POST /v1/reader-live-sync/{namespace}/pull|push`; the settings panel now
+  surfaces whether a saved server only supports snapshots or already
+  advertises `reader-live-sync-v1`.
 ### Added (earlier rounds)
 
 - iOS 随身伴读 aligned with the 02 iOS prototype:

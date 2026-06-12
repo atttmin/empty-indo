@@ -45,17 +45,23 @@
 
 ### 1. 实时同步 provider
 
-负责持久化容器的“同步开关”与能力声明。
+负责两件事：
 
-首发 provider：
+1. **容器模式**：当前哪些 provider 真正接到 SwiftData live store
+2. **协议状态**：其余 provider 是否已经具备进入 live sync 的 server 契约
+
+当前容器 mode：
 
 - `localOnly`
 - `cloudKit`
 
-后续 provider：
+当前协议 provider：
 
-- `emptyCloud`
-- `customServer`
+- `CloudKitLiveSyncProvider`
+- `ServerLiveSyncProvider`
+
+`ServerLiveSyncProvider` 现在只负责探测 `/v1/health.features` 里是否声明
+`reader-live-sync-v1`；它还**不会**把 server 提升成可切换的 live mode。
 
 ### 2. 快照备份 provider
 
@@ -72,6 +78,23 @@
 - `webdav`
 - `walrus`
 
+
+### 2.1 live delta 契约
+
+客户端已经落成一套 provider-neutral 的 live sync 契约：
+
+- `ReaderLiveSyncDelta`
+- `LiveSyncCursor`
+- `LiveSyncTombstone`
+- `ReaderLiveSyncPullRequest / Response`
+- `ReaderLiveSyncPushRequest / Response`
+
+HTTP 端点预留为：
+
+- `POST /v1/reader-live-sync/{namespace}/pull`
+- `POST /v1/reader-live-sync/{namespace}/push`
+
+这一步只定义 / 测试协议与状态探测；**不**代表 Empty Cloud live sync 已真正可用。
 ### 3. 身份 provider（后续）
 
 - `anonymousDevice`
@@ -176,7 +199,7 @@
 - 这仍是 **snapshot backup / restore**，不是 live sync mode
 - token 留空 = 无鉴权 server
 - token 非空 = `Authorization: Bearer …`
-- 恢复仍然是 **merge/upsert**
+- 当 `/v1/health.features` 包含 `reader-live-sync-v1` 时，设置页会把 server 标成“契约就绪”，但还不会允许切换成 live mode
 
 ### D. HTTP 契约（当前 client 期待）
 
@@ -185,6 +208,13 @@
 | `GET` | `/v1/health` | 200 即视为可连通；可返回 `{ status, service, features }` |
 | `PUT` | `/v1/reader-snapshots/{namespace}/latest` | 请求体为 `SyncSnapshot` JSON；header 含 `X-Empty-Device`、`X-Empty-Schema-Version` |
 | `GET` | `/v1/reader-snapshots/{namespace}/latest` | 返回 `SyncSnapshot` JSON |
+
+### E. future live sync HTTP 契约（当前 client 已实现 request/response）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/v1/reader-live-sync/{namespace}/pull` | 请求体：`ReaderLiveSyncPullRequest`；响应：`ReaderLiveSyncPullResponse` |
+| `POST` | `/v1/reader-live-sync/{namespace}/push` | 请求体：`ReaderLiveSyncPushRequest`；响应：`ReaderLiveSyncPushResponse` |
 
 ---
 
@@ -195,7 +225,7 @@
 - `Empty/Services/SyncSettings.swift`
   - 存储 live sync provider、folder target、server target
 - `Empty/Services/AppSession.swift`
-  - App 级状态：`ModelContainer`、sync settings、切换 provider、folder/server target 持久化
+  - App 级状态：`ModelContainer`、sync settings、切换 provider、folder/server target 持久化、provider 状态探测
 - `Empty/Services/SyncSnapshot.swift`
   - provider-neutral snapshot schema、capture / merge
 - `Empty/Services/SyncBackupProvider.swift`
@@ -204,8 +234,18 @@
   - folder bookmark 解析、写入 / 读取快照
 - `Empty/Services/ServerSnapshotClient.swift`
   - 兼容 Empty snapshot API 的 HTTPS client
+- `Empty/Services/LiveSyncContract.swift`
+  - delta / cursor / tombstone / pull-push 请求响应
+- `Empty/Services/LiveSyncProvider.swift`
+  - provider 状态协议
+- `Empty/Services/CloudKitLiveSyncProvider.swift`
+  - iCloud / CloudKit 状态探测
+- `Empty/Services/ServerLiveSyncProvider.swift`
+  - server live feature 探测
+- `Empty/Services/ServerLiveSyncClient.swift`
+  - future live sync pull / push client
 - `Empty/Views/SyncSettingsView.swift`
-  - 同步与备份 UI
+  - 同步与备份 UI + provider 状态探测
 
 ### 修改
 
@@ -222,11 +262,16 @@
 
 ## 本阶段不做的事
 
-### Empty Cloud / 自建 server **live sync**
+### Empty Cloud / 自建 server **live sync coordinator**
 
-原因：还没有 cursor / delta / 冲突合并的真实后端契约。
+原因：虽然 cursor / delta / pull-push 契约已经在客户端成型，但还没有真正的服务端 cursor、冲突合并与设备 tombstone 语义。
 
-本阶段只落 **server snapshot client**，不把它伪装成实时同步。
+所以本阶段只落：
+- `server snapshot client`
+- `live sync contract`
+- `provider status probe`
+
+还**没有**把 server 提升成可切换的 live sync mode。
 
 ### Passkey / 账号体系
 
@@ -244,11 +289,11 @@
 
 ## 后续阶段
 
-### Phase 2 — Empty Cloud / Custom Server live sync
+### Phase 2 — Empty Cloud / Custom Server live sync coordinator
 
 - `ServerSyncProvider`
 - Passkey 登录
-- 变更 cursor / delta push-pull
+- 把 `ReaderLiveSyncDelta` 接入真正的 pull / push 循环
 - 冲突合并与设备 tombstone
 - 对象存储放快照与 blob
 
@@ -276,6 +321,7 @@
 1. 应用能在 **本机 / iCloud** 间切换实时同步模式。
 2. 用户能选择任意系统文件夹作为备份目标。
 3. 用户能配置兼容 Empty snapshot API 的 HTTPS server，并测试连接。
-4. 用户能把 synced store 导出为快照，并从文件夹 / server 恢复。
-5. 快照恢复不会引入正文 / chunk / embedding。
-6. 现有单测与平台构建继续通过。
+4. 设置页能探测 iCloud / Empty Cloud live sync provider 状态。
+5. 客户端已具备 future live sync 的 delta / cursor / tombstone / pull-push 契约。
+6. 快照恢复不会引入正文 / chunk / embedding。
+7. 现有单测与平台构建继续通过。

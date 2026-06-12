@@ -15,6 +15,8 @@ final class AppSession: ObservableObject {
     @Published private(set) var container: ModelContainer
     @Published private(set) var syncSettings: SyncSettings
     @Published private(set) var containerRevision = UUID()
+    @Published private(set) var liveSyncStatuses: [LiveSyncProviderStatus] = []
+    @Published private(set) var isRefreshingLiveSyncStatuses = false
 
     let isEphemeral: Bool
 
@@ -30,6 +32,9 @@ final class AppSession: ObservableObject {
             container = try AppStores.makeContainer(syncMode: mode, ephemeral: isEphemeral)
         } catch {
             fatalError("Failed to set up persistence: \(error)")
+        }
+        Task { @MainActor in
+            await refreshLiveSyncStatuses()
         }
     }
 
@@ -48,6 +53,18 @@ final class AppSession: ObservableObject {
         ) ?? ""
     }
 
+    func refreshLiveSyncStatuses() async {
+        isRefreshingLiveSyncStatuses = true
+        defer { isRefreshingLiveSyncStatuses = false }
+
+        var statuses: [LiveSyncProviderStatus] = []
+        for provider in makeLiveSyncProviders() {
+            let status = await provider.status(selectedMode: effectiveLiveMode)
+            statuses.append(status)
+        }
+        liveSyncStatuses = statuses
+    }
+
     func setLiveMode(_ mode: SyncLiveMode) throws {
         guard !isEphemeral else { return }
         guard syncSettings.liveMode != mode else { return }
@@ -58,6 +75,7 @@ final class AppSession: ObservableObject {
         syncSettings = updated
         container = newContainer
         containerRevision = UUID()
+        refreshLiveSyncStatusesSoon()
     }
 
     func rememberBackupFolder(_ url: URL) throws {
@@ -126,6 +144,7 @@ final class AppSession: ObservableObject {
             lastValidatedAt: previous?.lastValidatedAt
         )
         persist(updated)
+        refreshLiveSyncStatusesSoon()
     }
 
     func clearServerTarget() {
@@ -136,6 +155,7 @@ final class AppSession: ObservableObject {
         var updated = syncSettings
         updated.serverTarget = nil
         persist(updated)
+        refreshLiveSyncStatusesSoon()
     }
 
     func markServerValidated(at date: Date = Date()) {
@@ -144,6 +164,7 @@ final class AppSession: ObservableObject {
         var updated = syncSettings
         updated.serverTarget = target
         persist(updated)
+        refreshLiveSyncStatusesSoon()
     }
 
     func markServerBackupCompleted(at date: Date = Date()) {
@@ -166,6 +187,36 @@ final class AppSession: ObservableObject {
                 bearerToken: serverAuthToken
             )
         )
+    }
+
+    func makeServerLiveSyncClient() throws -> ServerLiveSyncClient {
+        guard let target = syncSettings.serverTarget else {
+            throw ServerLiveSyncClientError.providerError("先保存一个 Empty Cloud / 自建 Server 目标。")
+        }
+        return ServerLiveSyncClient(
+            configuration: .init(
+                baseURLString: target.baseURLString,
+                namespace: target.namespace,
+                authMode: target.authMode,
+                bearerToken: serverAuthToken
+            )
+        )
+    }
+
+    private func makeLiveSyncProviders() -> [any LiveSyncProvider] {
+        [
+            CloudKitLiveSyncProvider(isEphemeral: isEphemeral),
+            ServerLiveSyncProvider(
+                target: syncSettings.serverTarget,
+                bearerToken: serverAuthToken
+            ),
+        ]
+    }
+
+    private func refreshLiveSyncStatusesSoon() {
+        Task { @MainActor in
+            await refreshLiveSyncStatuses()
+        }
     }
 
     private func persist(_ settings: SyncSettings) {

@@ -157,6 +157,77 @@ struct ServerSnapshotClientTests {
             _ = try await missingClient.restoreLatest()
         }
     }
+    @Test func liveSyncPullUsesExpectedContract() async throws {
+        let session = makeStubSession { request in
+            #expect(request.url?.absoluteString == "https://sync.example.com/v1/reader-live-sync/reader-main/pull")
+            #expect(request.httpMethod == "POST")
+            #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/vnd.empty.reader-live-sync+json")
+            let body = try #require(requestBodyData(from: request))
+            let decoded = try SyncSnapshotCodec.makeDecoder().decode(ReaderLiveSyncPullRequest.self, from: body)
+            #expect(decoded.cursor?.opaqueValue == "cursor-1")
+            #expect(decoded.wantsFullSnapshot == false)
+            return StubURLProtocol.response(
+                url: request.url!,
+                statusCode: 200,
+                headers: [:],
+                body: """
+                {"delta":{"schemaVersion":1,"emittedAt":"1970-01-01T00:02:03Z","isFullSnapshot":false,"books":[],"highlights":[],"sessions":[],"vocab":[],"studyCards":[],"bookmarks":[],"memoryItems":[],"tombstones":[]},"nextCursor":{"opaqueValue":"cursor-2","serverTime":"1970-01-01T00:03:20Z"},"resetRequired":false}
+                """.data(using: .utf8)!
+            )
+        }
+
+        let client = ServerLiveSyncClient(
+            configuration: .init(
+                baseURLString: "https://sync.example.com",
+                namespace: "reader-main",
+                authMode: .none,
+                bearerToken: "",
+                deviceLabel: "Puller"
+            ),
+            session: session
+        )
+
+        let response = try await client.pull(cursor: LiveSyncCursor(opaqueValue: "cursor-1"))
+        #expect(response.nextCursor?.opaqueValue == "cursor-2")
+        #expect(response.delta.books.isEmpty)
+        #expect(response.resetRequired == false)
+    }
+
+    @Test func liveSyncPushUsesExpectedContract() async throws {
+        let delta = ReaderLiveSyncDelta.bootstrap(from: makeSnapshot())
+        let session = makeStubSession { request in
+            #expect(request.url?.absoluteString == "https://sync.example.com/v1/reader-live-sync/reader-main/push")
+            #expect(request.httpMethod == "POST")
+            #expect(request.value(forHTTPHeaderField: "X-Empty-Schema-Version") == String(delta.schemaVersion))
+            let body = try #require(requestBodyData(from: request))
+            let decoded = try SyncSnapshotCodec.makeDecoder().decode(ReaderLiveSyncPushRequest.self, from: body)
+            #expect(decoded.baseCursor?.opaqueValue == "cursor-1")
+            #expect(decoded.delta.books.first?.title == delta.books.first?.title)
+            return StubURLProtocol.response(
+                url: request.url!,
+                statusCode: 200,
+                headers: [:],
+                body: """
+                {"acceptedCursor":{"opaqueValue":"cursor-2","serverTime":"1970-01-01T00:03:20Z"},"serverTime":"1970-01-01T00:03:20Z","resetRequired":false}
+                """.data(using: .utf8)!
+            )
+        }
+
+        let client = ServerLiveSyncClient(
+            configuration: .init(
+                baseURLString: "https://sync.example.com",
+                namespace: "reader-main",
+                authMode: .none,
+                bearerToken: "",
+                deviceLabel: "Pusher"
+            ),
+            session: session
+        )
+
+        let response = try await client.push(delta: delta, baseCursor: LiveSyncCursor(opaqueValue: "cursor-1"))
+        #expect(response.acceptedCursor?.opaqueValue == "cursor-2")
+        #expect(response.resetRequired == false)
+    }
 }
 
 

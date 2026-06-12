@@ -31,6 +31,7 @@ struct SyncSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     liveSyncSection
+                    liveSyncStatusSection
                     folderBackupSection
                     serverBackupSection
                     roadmapSection
@@ -47,7 +48,12 @@ struct SyncSettingsView: View {
             }
         }
         .background(palette.window)
-        .onAppear(perform: loadServerDraft)
+        .onAppear {
+            loadServerDraft()
+        }
+        .task {
+            await appSession.refreshLiveSyncStatuses()
+        }
         .fileImporter(
             isPresented: $isPickingFolder,
             allowedContentTypes: [.folder],
@@ -176,6 +182,66 @@ struct SyncSettingsView: View {
         }
     }
 
+    private var liveSyncStatusSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("provider 状态")
+                    .font(.system(size: 12, weight: .bold))
+                    .kerning(1.4)
+                    .foregroundStyle(palette.ink3)
+                Spacer()
+                actionButton(appSession.isRefreshingLiveSyncStatuses ? "探测中…" : "刷新状态") {
+                    refreshLiveSyncStatuses()
+                }
+                .disabled(isBusy || appSession.isRefreshingLiveSyncStatuses)
+            }
+
+            if appSession.liveSyncStatuses.isEmpty, appSession.isRefreshingLiveSyncStatuses {
+                Text("正在探测 iCloud 与 Empty Cloud live sync 能力…")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(palette.ink3)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .emptyCard(palette, radius: 12)
+            } else {
+                ForEach(appSession.liveSyncStatuses, id: \.kind) { status in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text(status.title)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(palette.ink)
+                            Text(status.state.badgeTitle)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(badgeForeground(for: status.state))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(badgeBackground(for: status.state), in: Capsule())
+                            Spacer()
+                            Text(status.checkedAt.formatted(date: .omitted, time: .shortened))
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(palette.ink3)
+                        }
+                        Text(status.detail)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(palette.ink2)
+                        if !status.features.isEmpty {
+                            Text("features · \(status.features.joined(separator: ", "))")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(palette.ink3)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .emptyCard(palette, radius: 12)
+                }
+            }
+
+            Text("Empty Cloud 真正进入 live mode 前，server 需要在 `/v1/health` 的 `features` 里声明 `reader-live-sync-v1`，并实现 pull / push 两个 delta 端点。")
+                .font(.system(size: 10.5))
+                .foregroundStyle(palette.ink3)
+        }
+    }
+
     private var folderBackupSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("第三方云 / 文件夹")
@@ -238,7 +304,7 @@ struct SyncSettingsView: View {
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
             VStack(alignment: .leading, spacing: 10) {
-                Text("这一层先走 snapshot API：你可以把读者快照推到兼容的 HTTPS 服务，再从同一 namespace 拉回。它不是 live sync mode，所以不会把没有后端契约的 server 伪装成实时同步。")
+                Text("这一层先走 snapshot API：你可以把读者快照推到兼容的 HTTPS 服务，再从同一 namespace 拉回。只有当 server 额外声明 `reader-live-sync-v1` 时，才值得进一步切成真正的 live sync mode。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(palette.ink2)
                 VStack(alignment: .leading, spacing: 8) {
@@ -294,7 +360,7 @@ struct SyncSettingsView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                Text("协议固定为 `GET /v1/health` 与 `PUT/GET /v1/reader-snapshots/{namespace}/latest`。若 token 留空，则按无鉴权 server 处理；若填入 token，则走 `Authorization: Bearer …`。")
+                Text("snapshot 协议固定为 `GET /v1/health` 与 `PUT/GET /v1/reader-snapshots/{namespace}/latest`。future live sync 协议则会额外使用 `POST /v1/reader-live-sync/{namespace}/pull|push`。")
                     .font(.system(size: 10.5))
                     .foregroundStyle(palette.ink3)
             }
@@ -307,7 +373,7 @@ struct SyncSettingsView: View {
                 .font(.system(size: 12, weight: .bold))
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
-            Text("下一步会在同一套快照 / provider 边界上接真正的 Empty Cloud live sync；Passkey 先做账号登录与密钥封装层，Walrus 仍保持可选导出 / 备份，不把钱包与存储绑死。")
+            Text("下一步会在同一套 delta 契约上接真正的 Empty Cloud live sync coordinator；Passkey 先做账号登录与密钥封装层，Walrus 仍保持可选导出 / 备份，不把钱包与存储绑死。")
                 .font(.system(size: 11.5))
                 .foregroundStyle(palette.ink2)
                 .padding(12)
@@ -379,6 +445,28 @@ struct SyncSettingsView: View {
         .buttonStyle(.plain)
     }
 
+    private func badgeBackground(for state: LiveSyncProviderState) -> Color {
+        switch state {
+        case .active:
+            palette.accent
+        case .available, .contractReady:
+            palette.accentSoft
+        case .setupRequired, .snapshotOnly, .unavailable:
+            palette.side
+        }
+    }
+
+    private func badgeForeground(for state: LiveSyncProviderState) -> Color {
+        switch state {
+        case .active:
+            palette.window
+        case .available, .contractReady:
+            palette.accent
+        case .setupRequired, .snapshotOnly, .unavailable:
+            palette.ink3
+        }
+    }
+
     private func applyLiveMode(_ mode: SyncLiveMode) {
         do {
             try appSession.setLiveMode(mode)
@@ -395,6 +483,13 @@ struct SyncSettingsView: View {
             serverNamespace = target.namespace
         }
         serverToken = appSession.serverAuthToken
+    }
+
+    private func refreshLiveSyncStatuses() {
+        runBusyTask {
+            await appSession.refreshLiveSyncStatuses()
+            return "已刷新 live sync provider 状态。"
+        }
     }
 
     private func handleFolderPick(_ result: Result<[URL], Error>) {
@@ -449,7 +544,7 @@ struct SyncSettingsView: View {
 
     private func testServerConnection() {
         runBusyTask {
-            let client = try makeCurrentServerClient()
+            let client = try makeCurrentServerSnapshotClient()
             let health = try await client.healthCheck()
             appSession.markServerValidated()
             let service = health.service ?? "server"
@@ -461,7 +556,7 @@ struct SyncSettingsView: View {
     private func backupToServer() {
         runBusyTask {
             let snapshot = try SyncSnapshot.capture(from: modelContext)
-            let client = try makeCurrentServerClient()
+            let client = try makeCurrentServerSnapshotClient()
             let receipt = try await client.export(snapshot: snapshot)
             appSession.markServerBackupCompleted(at: receipt.updatedAt ?? snapshot.exportedAt)
             return "已上传到 \(receipt.locationDescription)。"
@@ -470,13 +565,13 @@ struct SyncSettingsView: View {
 
     private func restoreFromServer() {
         runBusyTask {
-            let snapshot = try await makeCurrentServerClient().restoreLatest()
+            let snapshot = try await makeCurrentServerSnapshotClient().restoreLatest()
             try snapshot.merge(into: modelContext)
             return "已把 server 快照合并回当前书库。"
         }
     }
 
-    private func makeCurrentServerClient() throws -> ServerSnapshotClient {
+    private func makeCurrentServerSnapshotClient() throws -> ServerSnapshotClient {
         try appSession.saveServerTarget(
             baseURLString: serverBaseURL,
             namespace: serverNamespace,

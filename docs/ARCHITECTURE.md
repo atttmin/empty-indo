@@ -34,16 +34,24 @@
 | `StudyCardEntry` | 问答卡 / 链接卡 / 复习卡 |
 | `MemoryItem` | ReaderMemory：高亮批注 / 链接卡 / 问答卡 / 主题记忆 |
 
-实时同步 provider 由 `SyncLiveMode` 选择：
+实时同步 provider 现在拆成两层：
 
-- `localOnly` — 同一组 synced schema 仅落本机，不接云
-- `cloudKit` — `syncedDatabase = .automatic`，`Empty.entitlements` 含 iCloud capability 时走 CloudKit
+- **已接通的 mode**：`SyncLiveMode`
+  - `localOnly` — 同一组 synced schema 仅落本机，不接云
+  - `cloudKit` — `syncedDatabase = .automatic`，`Empty.entitlements` 含 iCloud capability 时走 CloudKit
+- **协议 / 状态层**：`LiveSyncProvider`
+  - `CloudKitLiveSyncProvider` 负责探测 iCloud 账号可用性
+  - `ServerLiveSyncProvider` 负责探测 Empty Cloud / 自建 server 是否声明 `reader-live-sync-v1`
 
 App 启动经 `AppSession` 读取 `SyncSettings`，再调用 `AppStores.makeContainer(syncMode:ephemeral:)` 构造容器。若选择 `cloudKit` 但容器初始化失败（本机未登录 iCloud、关闭签名的测试环境等），会自动以 `cloudKitDatabase: .none` 重建同一组磁盘 store——应用照常工作，仅不同步。
 
-第三方云路径首发不直接接到 SwiftData live sync，而是通过 `SyncSnapshot` provider 壳层落成两条快照路：
-`FolderBackupProvider` 负责 Files / File Provider 文件夹；
-`ServerSnapshotClient` 负责兼容 Empty snapshot API 的 HTTPS server（`GET /v1/health`、`PUT/GET /v1/reader-snapshots/{namespace}/latest`）。
+第三方云路径当前仍不直接接到 SwiftData live sync，而是通过 `SyncSnapshot` provider 壳层落成两条快照路：
+- `FolderBackupProvider` — Files / File Provider 文件夹
+- `ServerSnapshotClient` — 兼容 Empty snapshot API 的 HTTPS server（`GET /v1/health`、`PUT/GET /v1/reader-snapshots/{namespace}/latest`）
+
+同时，live sync 的 delta 契约已经在客户端成型：`ReaderLiveSyncDelta`、`LiveSyncCursor`、`LiveSyncTombstone`、`ReaderLiveSyncPullRequest/Response`、`ReaderLiveSyncPushRequest/Response`，对应 future server 端点：
+- `POST /v1/reader-live-sync/{namespace}/pull`
+- `POST /v1/reader-live-sync/{namespace}/push`
 
 ### Local Store（仅本机）
 
