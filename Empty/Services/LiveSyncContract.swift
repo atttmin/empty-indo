@@ -68,6 +68,14 @@ nonisolated struct ReaderLiveSyncDelta: Codable, Equatable, Sendable {
             + memoryItems.count
     }
 
+    var changeCount: Int {
+        recordCount + tombstones.count
+    }
+
+    var hasChanges: Bool {
+        changeCount > 0
+    }
+
     static func bootstrap(from snapshot: SyncSnapshot) -> ReaderLiveSyncDelta {
         ReaderLiveSyncDelta(
             schemaVersion: snapshot.schemaVersion,

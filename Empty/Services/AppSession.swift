@@ -23,6 +23,7 @@ final class AppSession: ObservableObject {
 
     private var currentScenePhase: ScenePhase = .active
     private var autoSyncTask: Task<Void, Never>?
+    private let mutationJournalStore = SyncMutationJournalStore()
 
     init(isEphemeral override: Bool? = nil) {
         let process = ProcessInfo.processInfo
@@ -81,7 +82,8 @@ final class AppSession: ObservableObject {
             folderTarget: syncSettings.folderTarget,
             serverTarget: syncSettings.serverTarget,
             cloudStatus: liveSyncStatuses.first { $0.kind == .cloudKit },
-            serverStatus: liveSyncStatuses.first { $0.kind == .server }
+            serverStatus: liveSyncStatuses.first { $0.kind == .server },
+            pendingServerChanges: autoSyncRuntime.pendingChangeCount
         )
     }
 
@@ -112,6 +114,22 @@ final class AppSession: ObservableObject {
             statuses.append(status)
         }
         liveSyncStatuses = statuses
+    }
+
+    func refreshServerPendingMutations() {
+        guard let target = syncSettings.serverTarget else {
+            autoSyncRuntime.pendingUpsertCount = 0
+            autoSyncRuntime.pendingTombstoneCount = 0
+            return
+        }
+        do {
+            let summary = try currentServerMutationSummary(target: target)
+            autoSyncRuntime.pendingUpsertCount = summary.upsertCount
+            autoSyncRuntime.pendingTombstoneCount = summary.tombstoneCount
+        } catch {
+            autoSyncRuntime.pendingUpsertCount = 0
+            autoSyncRuntime.pendingTombstoneCount = 0
+        }
     }
 
     func setLiveMode(_ mode: SyncLiveMode) throws {
@@ -185,34 +203,54 @@ final class AppSession: ObservableObject {
         }
 
         let previous = syncSettings.serverTarget
-        var updated = syncSettings
-        updated.serverTarget = .init(
+        let identityChanged =
+            previous?.baseURLString != normalizedBaseURL
+            || previous?.namespace != normalizedNamespace
+        let nextTarget = SyncSettings.ServerBackupTarget(
             baseURLString: normalizedBaseURL,
             namespace: normalizedNamespace,
             authMode: authMode,
-            lastSnapshotAt: previous?.lastSnapshotAt,
-            lastValidatedAt: previous?.lastValidatedAt,
-            liveCursor: previous?.liveCursor,
-            lastLivePullAt: previous?.lastLivePullAt,
-            lastLivePushAt: previous?.lastLivePushAt,
+            lastSnapshotAt: identityChanged ? nil : previous?.lastSnapshotAt,
+            lastValidatedAt: identityChanged ? nil : previous?.lastValidatedAt,
+            liveCursor: identityChanged ? nil : previous?.liveCursor,
+            lastLivePullAt: identityChanged ? nil : previous?.lastLivePullAt,
+            lastLivePushAt: identityChanged ? nil : previous?.lastLivePushAt,
             autoSyncEnabled: previous?.autoSyncEnabled ?? false,
             autoSyncIntervalSeconds: previous?.clampedAutoSyncIntervalSeconds ?? 120,
-            lastAutoSyncAt: previous?.lastAutoSyncAt,
-            lastAutoSyncFingerprint: previous?.lastAutoSyncFingerprint
+            lastAutoSyncAt: identityChanged ? nil : previous?.lastAutoSyncAt,
+            lastAutoSyncFingerprint: identityChanged ? nil : previous?.lastAutoSyncFingerprint
         )
+
+        if identityChanged {
+            if let previous {
+                try? mutationJournalStore.clear(for: previous)
+            }
+            try? mutationJournalStore.clear(for: nextTarget)
+        }
+
+        var updated = syncSettings
+        updated.serverTarget = nextTarget
         persist(updated)
         refreshLiveSyncStatusesSoon()
+        restartAutoSyncLoopIfNeeded()
+        refreshServerPendingMutations()
     }
 
     func clearServerTarget() {
+        let previous = syncSettings.serverTarget
         KeychainStore.delete(
             account: SyncSettings.serverTokenAccount,
             service: Self.syncCredentialService
         )
+        if let previous {
+            try? mutationJournalStore.clear(for: previous)
+        }
         var updated = syncSettings
         updated.serverTarget = nil
         persist(updated)
         refreshLiveSyncStatusesSoon()
+        restartAutoSyncLoopIfNeeded()
+        refreshServerPendingMutations()
     }
 
     func markServerValidated(at date: Date = Date()) {
@@ -253,9 +291,13 @@ final class AppSession: ObservableObject {
     func resetServerLiveCursor() {
         guard var target = syncSettings.serverTarget else { return }
         target.liveCursor = nil
+        target.lastAutoSyncFingerprint = nil
         var updated = syncSettings
         updated.serverTarget = target
         persist(updated)
+        try? mutationJournalStore.clear(for: target)
+        restartAutoSyncLoopIfNeeded()
+        refreshServerPendingMutations()
     }
 
     func setServerAutoSyncEnabled(_ enabled: Bool) {
@@ -310,9 +352,124 @@ final class AppSession: ObservableObject {
         try ServerSyncCoordinator(client: makeServerLiveSyncClient())
     }
 
+    func performServerLivePull(forceFullSnapshot: Bool = false) async throws -> ServerSyncPullSummary {
+        guard let target = syncSettings.serverTarget else {
+            throw ServerLiveSyncClientError.providerError("先保存一个 Empty Cloud / 自建 Server 目标。")
+        }
+        let summary = try await makeServerSyncCoordinator().pull(
+            into: container.mainContext,
+            cursor: target.liveCursor,
+            forceFullSnapshot: forceFullSnapshot || target.liveCursor == nil
+        )
+        markServerLivePullCompleted(cursor: summary.cursor, at: summary.pulledAt)
+        let activeTarget = syncSettings.serverTarget ?? target
+        let pulledSnapshot = try SyncSnapshot.capture(from: container.mainContext)
+        try persistServerMutationBaseline(pulledSnapshot, for: activeTarget)
+        try updateServerAutoSyncFingerprint(using: pulledSnapshot)
+        refreshServerPendingMutations()
+        return summary
+    }
+
+    func performServerLivePush(forceFullSnapshot: Bool = false) async throws -> ServerSyncPushSummary {
+        guard let target = syncSettings.serverTarget else {
+            throw ServerLiveSyncClientError.providerError("先保存一个 Empty Cloud / 自建 Server 目标。")
+        }
+        let currentSnapshot = try SyncSnapshot.capture(from: container.mainContext)
+        let delta: ReaderLiveSyncDelta
+        if forceFullSnapshot {
+            delta = .bootstrap(from: currentSnapshot)
+        } else if let journal = try loadServerMutationJournal(for: target) {
+            delta = journal.makeDelta(to: currentSnapshot)
+        } else {
+            delta = .bootstrap(from: currentSnapshot)
+        }
+
+        guard forceFullSnapshot || delta.hasChanges else {
+            refreshServerPendingMutations()
+            return ServerSyncPushSummary(
+                pushedRecordCount: 0,
+                tombstoneCount: 0,
+                cursor: target.liveCursor,
+                pushedAt: currentSnapshot.exportedAt,
+                wasFullSnapshot: false
+            )
+        }
+
+        let summary = try await makeServerSyncCoordinator().push(delta: delta, baseCursor: target.liveCursor)
+        markServerLivePushCompleted(cursor: summary.cursor, at: summary.pushedAt)
+        let activeTarget = syncSettings.serverTarget ?? target
+        try persistServerMutationBaseline(currentSnapshot, for: activeTarget)
+        try updateServerAutoSyncFingerprint(using: currentSnapshot)
+        refreshServerPendingMutations()
+        return summary
+    }
+
+    func performServerLiveSync(forcePush: Bool = false) async throws -> ServerSyncRoundTripSummary {
+        guard let target = syncSettings.serverTarget else {
+            throw ServerLiveSyncClientError.providerError("先保存一个 Empty Cloud / 自建 Server 目标。")
+        }
+
+        let localSnapshot = try SyncSnapshot.capture(from: container.mainContext)
+        let localDelta: ReaderLiveSyncDelta
+        if forcePush {
+            localDelta = .bootstrap(from: localSnapshot)
+        } else if let journal = try loadServerMutationJournal(for: target) {
+            localDelta = journal.makeDelta(to: localSnapshot)
+        } else {
+            localDelta = .bootstrap(from: localSnapshot)
+        }
+
+        let pullSummary = try await makeServerSyncCoordinator().pull(
+            into: container.mainContext,
+            cursor: target.liveCursor,
+            forceFullSnapshot: target.liveCursor == nil
+        )
+        markServerLivePullCompleted(cursor: pullSummary.cursor, at: pullSummary.pulledAt)
+        let activeTarget = syncSettings.serverTarget ?? target
+        let pulledSnapshot = try SyncSnapshot.capture(from: container.mainContext)
+        try persistServerMutationBaseline(pulledSnapshot, for: activeTarget)
+
+        if localDelta.hasChanges {
+            try localDelta.merge(into: container.mainContext)
+        }
+
+        let reconciledSnapshot = localDelta.hasChanges
+            ? try SyncSnapshot.capture(from: container.mainContext)
+            : pulledSnapshot
+        let deltaToPush: ReaderLiveSyncDelta?
+        if localDelta.hasChanges {
+            deltaToPush = localDelta
+        } else if forcePush {
+            deltaToPush = .bootstrap(from: reconciledSnapshot)
+        } else {
+            deltaToPush = nil
+        }
+
+        let pushSummary: ServerSyncPushSummary
+        if let deltaToPush, forcePush || deltaToPush.hasChanges {
+            pushSummary = try await makeServerSyncCoordinator().push(delta: deltaToPush, baseCursor: pullSummary.cursor)
+            markServerLivePushCompleted(cursor: pushSummary.cursor, at: pushSummary.pushedAt)
+            let latestTarget = syncSettings.serverTarget ?? activeTarget
+            try persistServerMutationBaseline(reconciledSnapshot, for: latestTarget)
+            try updateServerAutoSyncFingerprint(using: reconciledSnapshot)
+        } else {
+            pushSummary = ServerSyncPushSummary(
+                pushedRecordCount: 0,
+                tombstoneCount: 0,
+                cursor: pullSummary.cursor,
+                pushedAt: reconciledSnapshot.exportedAt,
+                wasFullSnapshot: false
+            )
+            try updateServerAutoSyncFingerprint(using: pulledSnapshot)
+        }
+
+        refreshServerPendingMutations()
+        return ServerSyncRoundTripSummary(pull: pullSummary, push: pushSummary)
+    }
+
     func runAutomaticServerSync(force: Bool, trigger: String) async throws -> String? {
         guard !isEphemeral else { return nil }
-        guard var target = syncSettings.serverTarget else { return nil }
+        guard let target = syncSettings.serverTarget else { return nil }
         guard force || target.autoSyncEnabled else { return nil }
 
         let status: LiveSyncProviderStatus
@@ -336,41 +493,18 @@ final class AppSession: ObservableObject {
             autoSyncRuntime.isRunning = false
         }
 
-        let coordinator = try makeServerSyncCoordinator()
-        let pullSummary = try await coordinator.pull(
-            into: container.mainContext,
-            cursor: target.liveCursor,
-            forceFullSnapshot: target.liveCursor == nil
-        )
-        markServerLivePullCompleted(cursor: pullSummary.cursor, at: pullSummary.pulledAt)
-        target = syncSettings.serverTarget ?? target
-
-        let snapshot = try SyncSnapshot.capture(from: container.mainContext)
-        let fingerprint = try snapshot.stableFingerprint()
-        let shouldPush = force || target.lastAutoSyncFingerprint != fingerprint
-
-        if shouldPush {
-            let pushSummary = try await coordinator.push(
-                from: container.mainContext,
-                baseCursor: pullSummary.cursor
-            )
-            markServerLivePushCompleted(cursor: pushSummary.cursor, at: pushSummary.pushedAt)
-        }
-
+        let summary = try await performServerLiveSync(forcePush: force)
         guard var refreshedTarget = syncSettings.serverTarget else {
             return nil
         }
         refreshedTarget.lastAutoSyncAt = Date()
-        if shouldPush {
-            refreshedTarget.lastAutoSyncFingerprint = fingerprint
-        }
         var updated = syncSettings
         updated.serverTarget = refreshedTarget
         persist(updated)
 
         autoSyncRuntime.lastSyncedAt = refreshedTarget.lastAutoSyncAt
         autoSyncRuntime.lastFingerprintPrefix = refreshedTarget.shortFingerprint
-        let action = shouldPush ? "pull + push" : "pull only"
+        let action = summary.push.changeCount > 0 || (force && summary.push.wasFullSnapshot) ? "pull + push" : "pull only"
         return "自动同步完成（\(action)）。"
     }
 
@@ -437,6 +571,41 @@ final class AppSession: ObservableObject {
         }
     }
 
+    private func loadServerMutationJournal(for target: SyncSettings.ServerBackupTarget) throws -> SyncMutationJournal? {
+        if let journal = try mutationJournalStore.load(for: target) {
+            return journal
+        }
+        guard target.liveCursor != nil else {
+            return nil
+        }
+        let migrated = SyncMutationJournal(baselineSnapshot: try SyncSnapshot.capture(from: container.mainContext))
+        try mutationJournalStore.save(migrated, for: target)
+        return migrated
+    }
+
+    private func persistServerMutationBaseline(_ snapshot: SyncSnapshot, for target: SyncSettings.ServerBackupTarget) throws {
+        try mutationJournalStore.save(
+            SyncMutationJournal(baselineSnapshot: snapshot, savedAt: Date()),
+            for: target
+        )
+    }
+
+    private func updateServerAutoSyncFingerprint(using snapshot: SyncSnapshot) throws {
+        guard var target = syncSettings.serverTarget else { return }
+        target.lastAutoSyncFingerprint = try snapshot.stableFingerprint()
+        var updated = syncSettings
+        updated.serverTarget = target
+        persist(updated)
+    }
+
+    private func currentServerMutationSummary(target: SyncSettings.ServerBackupTarget) throws -> SyncMutationSummary {
+        let snapshot = try SyncSnapshot.capture(from: container.mainContext)
+        if let journal = try loadServerMutationJournal(for: target) {
+            return journal.pendingSummary(for: snapshot)
+        }
+        return SyncMutationSummary.bootstrap(from: snapshot)
+    }
+
     private func refreshAutoSyncRuntime() {
         autoSyncRuntime.isEnabled = syncSettings.serverTarget?.autoSyncEnabled ?? false
         autoSyncRuntime.lastSyncedAt = syncSettings.serverTarget?.lastAutoSyncAt
@@ -444,6 +613,7 @@ final class AppSession: ObservableObject {
         if autoSyncRuntime.isEnabled == false {
             autoSyncRuntime.lastTrigger = nil
         }
+        refreshServerPendingMutations()
     }
 
     private func persist(_ settings: SyncSettings) {

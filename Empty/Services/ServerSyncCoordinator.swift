@@ -16,9 +16,14 @@ nonisolated struct ServerSyncPullSummary: Equatable, Sendable {
 
 nonisolated struct ServerSyncPushSummary: Equatable, Sendable {
     var pushedRecordCount: Int
+    var tombstoneCount: Int
     var cursor: LiveSyncCursor?
     var pushedAt: Date
     var wasFullSnapshot: Bool
+
+    var changeCount: Int {
+        pushedRecordCount + tombstoneCount
+    }
 }
 
 nonisolated struct ServerSyncRoundTripSummary: Equatable, Sendable {
@@ -45,21 +50,14 @@ struct ServerSyncCoordinator {
         )
     }
 
-    func push(from modelContext: ModelContext, baseCursor: LiveSyncCursor?) async throws -> ServerSyncPushSummary {
-        let snapshot = try SyncSnapshot.capture(from: modelContext)
-        let delta = ReaderLiveSyncDelta.bootstrap(from: snapshot)
+    func push(delta: ReaderLiveSyncDelta, baseCursor: LiveSyncCursor?) async throws -> ServerSyncPushSummary {
         let response = try await client.push(delta: delta, baseCursor: baseCursor)
         return ServerSyncPushSummary(
             pushedRecordCount: delta.recordCount,
+            tombstoneCount: delta.tombstones.count,
             cursor: response.acceptedCursor,
-            pushedAt: response.serverTime ?? snapshot.exportedAt,
+            pushedAt: response.serverTime ?? delta.emittedAt,
             wasFullSnapshot: delta.isFullSnapshot
         )
-    }
-
-    func sync(into modelContext: ModelContext, cursor: LiveSyncCursor?) async throws -> ServerSyncRoundTripSummary {
-        let pullSummary = try await pull(into: modelContext, cursor: cursor)
-        let pushSummary = try await push(from: modelContext, baseCursor: pullSummary.cursor)
-        return ServerSyncRoundTripSummary(pull: pullSummary, push: pushSummary)
     }
 }

@@ -62,9 +62,7 @@ struct ServerSyncCoordinatorTests {
         #expect(try context.fetchCount(FetchDescriptor<Book>()) == 1)
     }
 
-    @Test func syncPullsThenPushesUsingPulledCursor() async throws {
-        let container = try AppStores.makeContainer(ephemeral: true)
-        let context = container.mainContext
+    @Test func pushSendsProvidedDeltaUsingGivenCursor() async throws {
         let remoteBook = Book(title: "Walden", author: "Thoreau", format: .epub)
         remoteBook.id = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
         let remoteBookID = remoteBook.id
@@ -77,24 +75,6 @@ struct ServerSyncCoordinatorTests {
 
         let session = makeCoordinatorSession(
             SequenceResponder([
-                { (request: URLRequest) in
-                    #expect(request.url?.absoluteString == "https://sync.example.com/v1/reader-live-sync/reader-main/pull")
-                    let body = try #require(coordinatorRequestBody(from: request))
-                    let decoded = try SyncSnapshotCodec.makeDecoder().decode(ReaderLiveSyncPullRequest.self, from: body)
-                    #expect(decoded.cursor == nil)
-                    return CoordinatorStubURLProtocol.response(
-                        url: request.url!,
-                        statusCode: 200,
-                        headers: [:],
-                        body: try SyncSnapshotCodec.makeEncoder().encode(
-                            ReaderLiveSyncPullResponse(
-                                delta: remoteDelta,
-                                nextCursor: LiveSyncCursor(opaqueValue: "cursor-2", serverTime: Date(timeIntervalSince1970: 200)),
-                                resetRequired: false
-                            )
-                        )
-                    )
-                },
                 { (request: URLRequest) in
                     #expect(request.url?.absoluteString == "https://sync.example.com/v1/reader-live-sync/reader-main/push")
                     let body = try #require(coordinatorRequestBody(from: request))
@@ -130,10 +110,13 @@ struct ServerSyncCoordinatorTests {
             )
         )
 
-        let summary = try await coordinator.sync(into: context, cursor: nil as LiveSyncCursor?)
-        #expect(summary.pull.cursor?.opaqueValue == "cursor-2")
-        #expect(summary.push.cursor?.opaqueValue == "cursor-3")
-        #expect(try context.fetchCount(FetchDescriptor<Book>()) == 1)
+        let summary = try await coordinator.push(
+            delta: remoteDelta,
+            baseCursor: LiveSyncCursor(opaqueValue: "cursor-2")
+        )
+        #expect(summary.cursor?.opaqueValue == "cursor-3")
+        #expect(summary.pushedRecordCount == 1)
+        #expect(summary.tombstoneCount == 0)
     }
 }
 

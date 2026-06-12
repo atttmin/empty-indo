@@ -12,4 +12,10 @@ nonisolated struct ServerAutoSyncRuntimeState: Equatable, Sendable {
     var lastSyncedAt: Date?
     var lastError: String?
     var lastFingerprintPrefix: String?
+    var pendingUpsertCount: Int = 0
+    var pendingTombstoneCount: Int = 0
+
+    var pendingChangeCount: Int {
+        pendingUpsertCount + pendingTombstoneCount
+    }
 }

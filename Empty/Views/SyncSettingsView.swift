@@ -56,6 +56,7 @@ struct SyncSettingsView: View {
         }
         .task {
             await appSession.refreshLiveSyncStatuses()
+            appSession.refreshServerPendingMutations()
         }
         .fileImporter(
             isPresented: $isPickingFolder,
@@ -443,6 +444,14 @@ struct SyncSettingsView: View {
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(palette.ink2)
                             }
+                            let pendingChanges = appSession.autoSyncRuntime.pendingChangeCount
+                            Text(
+                                pendingChanges == 0
+                                    ? "当前没有待同步变化"
+                                    : "本地还有 \(pendingChanges) 处待同步变化"
+                            )
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(pendingChanges == 0 ? palette.ink3 : palette.accent)
 
                             if appSession.autoSyncRuntime.isEnabled {
                                 Text(appSession.autoSyncRuntime.isRunning ? "自动同步正在运行" : "自动同步已待命")
@@ -775,47 +784,36 @@ struct SyncSettingsView: View {
         return try appSession.makeServerSnapshotClient()
     }
 
-    private func makeCurrentServerSyncCoordinator() throws -> ServerSyncCoordinator {
+    private func refreshCurrentServerTarget() throws {
         try appSession.saveServerTarget(
             baseURLString: serverBaseURL,
             namespace: serverNamespace,
             authToken: serverToken
         )
         loadServerDraft()
-        return try appSession.makeServerSyncCoordinator()
     }
 
     private func pullFromLiveServer() {
         runBusyTask {
-            let summary = try await makeCurrentServerSyncCoordinator().pull(
-                into: modelContext,
-                cursor: appSession.serverLiveCursor
-            )
-            appSession.markServerLivePullCompleted(cursor: summary.cursor, at: summary.pulledAt)
-            return "已拉取 \(summary.appliedRecordCount) 条记录，tombstone \(summary.tombstoneCount) 条。"
+            try refreshCurrentServerTarget()
+            let summary = try await appSession.performServerLivePull()
+            return "已拉取 \(summary.appliedRecordCount) 条更新，删除 \(summary.tombstoneCount) 条。"
         }
     }
 
     private func pushToLiveServer() {
         runBusyTask {
-            let summary = try await makeCurrentServerSyncCoordinator().push(
-                from: modelContext,
-                baseCursor: appSession.serverLiveCursor
-            )
-            appSession.markServerLivePushCompleted(cursor: summary.cursor, at: summary.pushedAt)
-            return "已推送 \(summary.pushedRecordCount) 条记录。"
+            try refreshCurrentServerTarget()
+            let summary = try await appSession.performServerLivePush()
+            return "已推送 \(summary.pushedRecordCount) 条更新，删除 \(summary.tombstoneCount) 条。"
         }
     }
 
     private func syncLiveServer() {
         runBusyTask {
-            let summary = try await makeCurrentServerSyncCoordinator().sync(
-                into: modelContext,
-                cursor: appSession.serverLiveCursor
-            )
-            appSession.markServerLivePullCompleted(cursor: summary.pull.cursor, at: summary.pull.pulledAt)
-            appSession.markServerLivePushCompleted(cursor: summary.push.cursor ?? summary.pull.cursor, at: summary.push.pushedAt)
-            return "双向同步完成：pull \(summary.pull.appliedRecordCount) / push \(summary.push.pushedRecordCount)。"
+            try refreshCurrentServerTarget()
+            let summary = try await appSession.performServerLiveSync()
+            return "双向同步完成：pull \(summary.pull.appliedRecordCount) / push \(summary.push.changeCount)。"
         }
     }
 

@@ -24,15 +24,22 @@ nonisolated enum SyncUsageSummaryBuilder {
         folderTarget: SyncSettings.FolderBackupTarget?,
         serverTarget: SyncSettings.ServerBackupTarget?,
         cloudStatus: LiveSyncProviderStatus?,
-        serverStatus: LiveSyncProviderStatus?
+        serverStatus: LiveSyncProviderStatus?,
+        pendingServerChanges: Int? = nil
     ) -> SyncUsageSummary {
         if let serverTarget {
             switch serverStatus?.state {
             case .contractReady:
                 if serverTarget.autoSyncEnabled {
+                    let detail: String
+                    if let pendingServerChanges, pendingServerChanges > 0 {
+                        detail = "这套 server 已支持自动同步。本机现在还有 \(pendingServerChanges) 处待同步变化；前台自动同步会继续拉取并推送。"
+                    } else {
+                        detail = "这套 server 已支持自动同步。你正常阅读即可；应用在前台时会定时拉取，内容变化时再推送。"
+                    }
                     return SyncUsageSummary(
                         title: "自建同步已接好",
-                        detail: "这套 server 已支持自动同步。你正常阅读即可；应用在前台时会定时拉取，内容变化时再推送。",
+                        detail: detail,
                         recommendation: "平时只看“最近自动同步”是否有时间更新；出问题再展开高级状态。",
                         tone: .accent
                     )

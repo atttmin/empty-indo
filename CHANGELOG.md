@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+
+- Empty Cloud / 自建 server 的前台自动同步不再总是回推整库 full snapshot：客户端现在持久化本地 `SyncMutationJournal` baseline，pull 后只重放仍未推送的本地 upsert / tombstone，自动同步与手动 push 也都会在设置页显示当前待同步变化数量。
 
 ### Fixed
 

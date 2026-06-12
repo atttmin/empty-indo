@@ -50,13 +50,13 @@ App 启动经 `AppSession` 读取 `SyncSettings`，再调用 `AppStores.makeCont
 - `ServerSnapshotClient` — 兼容 Empty snapshot API 的 HTTPS server 快照（`GET /v1/health`、`PUT/GET /v1/reader-snapshots/{namespace}/latest`）
 - `ServerSyncCoordinator` — 对 **contract-ready** server 执行前台 live 协调
 
-`ServerSyncCoordinator` 的当前语义：
+`ServerSyncCoordinator` + `SyncMutationJournal` 的当前语义：
 - `pull`：`POST /v1/reader-live-sync/{namespace}/pull` → merge / tombstone apply
-- `push`：把当前 synced store 捕获成 **full-snapshot delta** 后 `POST /push`
-- `sync`：先 pull 再 push，并持久化最新 cursor
-- `auto sync`：应用在前台时按间隔自动 pull，再根据 snapshot fingerprint 判断是否需要 push
+- `push`：根据本地 journal baseline 只发送变更过的 upsert / tombstone；首次或强制同步时才退回 full-snapshot delta
+- `sync`：先 pull、把 pulled state 记为新 baseline，再把本地未推送变更重新覆盖回去并 push
+- `auto sync`：应用在前台时按间隔自动 pull；若 journal 里还有本地变化，再做增量 push
 
-这一步已经能让“自建 server 用户”基本照常使用，但仍**不是最终形态**：还没有细粒度 mutation journal、后台重试队列、冲突策略 UI 或 Passkey 账号层。
+这一步已经能让“自建 server 用户”基本照常使用，但仍**不是最终形态**：还没有后台重试队列、冲突策略 UI 或 Passkey 账号层。
 
 ### Local Store（仅本机）
 
