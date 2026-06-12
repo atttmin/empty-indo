@@ -140,7 +140,7 @@ xcodebuild test -project Empty.xcodeproj -scheme Empty \
 > `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""`
 > 绕过 iCloud entitlement 签名。
 
-当前 **217/217** 单元测试全部通过；UI smoke / 截图测试在 `EmptyUITests` 中单独运行。
+当前 **222/222** 单元测试全部通过；UI smoke / 截图测试在 `EmptyUITests` 中单独运行。
 
 ---
 
@@ -167,7 +167,12 @@ xcodebuild test -project Empty.xcodeproj -scheme Empty \
 ```
 
 核心设计原则：**同步读者的数据，不同步书籍正文。**  
-实时同步现在可在 **仅本机 / iCloud** 间切换；第三方云路径已支持**文件夹快照备份**、**兼容 HTTPS snapshot API 的 server 快照**，以及基于 `ReaderLiveSyncDelta` 的**手动 live pull / push / 双向同步协调器**。跨 store 仍只通过 `Book.id` 关联。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [docs/SYNC-BACKUP-DESIGN.md](docs/SYNC-BACKUP-DESIGN.md)。
+现在的使用心智可以很简单：
+- **最省心**：直接用 **iCloud**
+- **想自己选目录**：用 **文件夹备份**
+- **想跨平台 / 自建**：填 **Empty Cloud / 自建 Server**，再打开自动同步
+
+实时同步现在可在 **仅本机 / iCloud** 间切换；第三方云路径已支持**文件夹快照备份**、**兼容 HTTPS snapshot API 的 server 快照**，以及面向 contract-ready server 的**前台自动同步调度**。跨 store 仍只通过 `Book.id` 关联。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [docs/SYNC-BACKUP-DESIGN.md](docs/SYNC-BACKUP-DESIGN.md)。
 
 ---
 
@@ -224,7 +229,7 @@ git push -u origin main
 - [x] 可插拔同步基础版：实时同步可在「仅本机 / iCloud」切换，第三方云先支持文件夹快照备份 / 恢复（`SyncSettingsView`）
 - [x] Empty Cloud / 自建 server 壳层：兼容 snapshot API 的 HTTPS 目标可在设置里保存、测试连接、上传 / 恢复最新快照（仍不是 live sync）
 - [x] live sync 协议层：`ReaderLiveSyncDelta`、cursor / tombstone / pull / push 契约、iCloud / Empty Cloud provider 状态探测
-- [x] Empty Cloud 手动 live 协调器：contract-ready server 可做增量拉取、full-snapshot 推送、双向同步与 cursor 持久化（尚非自动后台 sync）
+- [x] Empty Cloud 自动同步基础版：contract-ready server 已支持前台自动拉取、按需推送 full-snapshot delta、cursor / 指纹持久化，以及更简单的设置页引导
 - [x] PDF 阅读支持（PDFKit 分页阅读 + 按页索引）
 - [x] PDF 划词与高亮（选区接入 AI 操作，高亮以 PDF 注释渲染）
 - [x] Mac 笔记屏 AI 主题建议
@@ -238,7 +243,7 @@ git push -u origin main
 - [x] EPUB 渲染线从 WebView 迁移到原生 SwiftUI：块模型解析、精确高亮 / 选区、跨段选取、高亮批注与精确跳回
 - [x] **ReaderMemory Phase 1/2 + 1b 基础版**（见 [docs/READER-MEMORY-PLAN.md](docs/READER-MEMORY-PLAN.md)）：跨书记忆 ingest/recall、伴读 `recall_reader_memory`、`propose_memory` 确认写入、本地 `MemoryEmbedding` 持久语义路、旧问答压缩为 `theme`、思维链接走记忆召回路
 - [x] **活思维链接基础升级**（见 [docs/LIBER-PORT-PLAN.md](docs/LIBER-PORT-PLAN.md) Wave 1）：链接卡 / 主题记忆可参与 `ThoughtLinkFinder`，AI theme/why 仍按需生成
-- [ ] 可选 Passkey 账号体系 / 自动后台 Empty Cloud live sync / Liber 互通（当前已有 local/iCloud live sync + folder/server snapshot backup + manual delta sync shell）
+- [ ] 可选 Passkey 账号体系 / 更细粒度 mutation journal / 真后台 Empty Cloud live sync / Liber 互通（当前已有 local/iCloud live sync + folder/server snapshot backup + foreground auto sync shell）
 
 完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。架构与规划见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 

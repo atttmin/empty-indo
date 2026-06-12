@@ -94,7 +94,7 @@ HTTP 端点预留为：
 - `POST /v1/reader-live-sync/{namespace}/pull`
 - `POST /v1/reader-live-sync/{namespace}/push`
 
-这一步先定义 / 测试协议与状态探测；随后已在客户端补上一层**手动 live 协调器**，但仍不代表 Empty Cloud 已具备自动后台 live sync。
+这一步先定义 / 测试协议与状态探测；随后客户端先有了**手动 live 协调器**，现在又补上了**前台自动调度壳层**，但仍不代表 Empty Cloud 已具备完整后台 live sync。
 ### 3. 身份 provider（后续）
 
 - `anonymousDevice`
@@ -216,7 +216,7 @@ HTTP 端点预留为：
 | `POST` | `/v1/reader-live-sync/{namespace}/pull` | 请求体：`ReaderLiveSyncPullRequest`；响应：`ReaderLiveSyncPullResponse` |
 | `POST` | `/v1/reader-live-sync/{namespace}/push` | 请求体：`ReaderLiveSyncPushRequest`；响应：`ReaderLiveSyncPushResponse` |
 
-### F. 手动 live sync 协调器（已实现）
+### F. live sync 协调器（已实现）
 
 入口：`SyncSettingsView`
 
@@ -224,6 +224,7 @@ HTTP 端点预留为：
 - 推送当前库（full-snapshot delta）
 - 双向同步（先 pull 再 push）
 - 重置 live cursor
+- 打开前台自动同步
 
 当前语义：
 
@@ -231,6 +232,7 @@ HTTP 端点预留为：
 - 删除依赖“当前 full snapshot 中缺席”来表达
 - `pull` 会先 merge record，再应用 tombstone 删除
 - cursor、上次 pull 时间、上次 push 时间持久化在 `SyncSettings.serverTarget`
+- 自动同步只在**前台**运行：定时 pull，再用 snapshot fingerprint 判断是否需要 push
 
 ---
 
@@ -241,9 +243,9 @@ HTTP 端点预留为：
 - `Empty/Services/SyncSettings.swift`
   - 存储 live sync provider、folder target、server target
 - `Empty/Services/AppSession.swift`
-  - App 级状态：`ModelContainer`、sync settings、切换 provider、folder/server target 持久化、provider 状态探测
+  - App 级状态：`ModelContainer`、sync settings、切换 provider、folder/server target 持久化、provider 状态探测、前台自动 sync 调度
 - `Empty/Services/SyncSnapshot.swift`
-  - provider-neutral snapshot schema、capture / merge
+  - provider-neutral snapshot schema、capture / merge、stable fingerprint
 - `Empty/Services/SyncBackupProvider.swift`
   - 快照备份 provider 抽象
 - `Empty/Services/FolderBackupProvider.swift`
@@ -255,15 +257,19 @@ HTTP 端点预留为：
 - `Empty/Services/LiveSyncProvider.swift`
   - provider 状态协议
 - `Empty/Services/CloudKitLiveSyncProvider.swift`
-  - iCloud / CloudKit 状态探测
+  - iCloud / CloudKit 状态探测（无 entitlement 时安全退回）
 - `Empty/Services/ServerLiveSyncProvider.swift`
   - server live feature 探测
 - `Empty/Services/ServerLiveSyncClient.swift`
   - future / manual live sync pull / push client
 - `Empty/Services/ServerSyncCoordinator.swift`
   - 手动 pull / push / 双向同步协调器
+- `Empty/Services/ServerAutoSyncState.swift`
+  - 前台自动同步 runtime 状态
+- `Empty/Services/SyncUsageSummary.swift`
+  - 把同步状态折叠成用户更容易理解的 plain-language 总结
 - `Empty/Views/SyncSettingsView.swift`
-  - 同步与备份 UI + provider 状态探测 + 手动 live sync 控件
+  - 同步与备份 UI + provider 状态探测 + 简化引导 + 高级手动控件
 
 ### 修改
 
@@ -280,11 +286,11 @@ HTTP 端点预留为：
 
 ## 本阶段不做的事
 
-### Empty Cloud / 自建 server **自动后台 live sync**
+### Empty Cloud / 自建 server **完整后台 live sync**
 
-原因：虽然 cursor / delta / pull-push 契约和手动协调器已经在客户端成型，但还没有：
-- 本地 mutation journal
-- 后台调度 / 重试
+原因：虽然 cursor / delta / pull-push 契约、手动协调器与前台自动调度都已经在客户端成型，但还没有：
+- 细粒度 mutation journal
+- 真后台调度 / 重试
 - 真实冲突合并策略 UI
 - Passkey 账号与设备授权
 
@@ -293,8 +299,9 @@ HTTP 端点预留为：
 - `live sync contract`
 - `provider status probe`
 - `manual live sync coordinator`
+- `foreground auto sync shell`
 
-还**没有**把 server 提升成自动后台 live sync mode。
+还**没有**把 server 提升成“细粒度、后台、账号化”的完整 live sync mode。
 
 ### Passkey / 账号体系
 
@@ -312,11 +319,11 @@ HTTP 端点预留为：
 
 ## 后续阶段
 
-### Phase 2 — Empty Cloud / Custom Server 自动后台 live sync
+### Phase 2 — Empty Cloud / Custom Server 更完整后台 live sync
 
 - `ServerSyncProvider`
 - Passkey 登录
-- 本地 mutation journal
+- 细粒度 mutation journal
 - 后台 pull / push 调度与重试
 - 冲突合并与设备 tombstone
 - 对象存储放快照与 blob
@@ -348,5 +355,6 @@ HTTP 端点预留为：
 4. 设置页能探测 iCloud / Empty Cloud live sync provider 状态。
 5. 客户端已具备 future live sync 的 delta / cursor / tombstone / pull-push 契约。
 6. contract-ready server 已可手动执行 pull / push / 双向同步，并持久化 cursor。
-7. 快照恢复不会引入正文 / chunk / embedding。
-8. 现有单测与平台构建继续通过。
+7. contract-ready server 已可在前台按间隔自动 pull，并按 snapshot fingerprint 决定是否 push。
+8. 快照恢复不会引入正文 / chunk / embedding。
+9. 现有单测与平台构建继续通过。

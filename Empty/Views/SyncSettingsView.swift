@@ -19,6 +19,8 @@ struct SyncSettingsView: View {
     @State private var errorMessage: String?
     @State private var confirmRestore = false
     @State private var confirmServerRestore = false
+    @State private var showAdvancedStatus = false
+    @State private var showAdvancedServer = false
     @State private var serverBaseURL = ""
     @State private var serverNamespace = "default"
     @State private var serverToken = ""
@@ -30,6 +32,7 @@ struct SyncSettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    summarySection
                     liveSyncSection
                     liveSyncStatusSection
                     folderBackupSection
@@ -126,6 +129,47 @@ struct SyncSettingsView: View {
         .padding(EdgeInsets(top: 16, leading: 20, bottom: 12, trailing: 16))
     }
 
+    private var summarySection: some View {
+        let summary = appSession.syncUsageSummary
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("怎么用最省心")
+                .font(.system(size: 12, weight: .bold))
+                .kerning(1.4)
+                .foregroundStyle(palette.ink3)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(summary.title)
+                    .font(.system(size: 15, weight: .black, design: .serif))
+                    .foregroundStyle(summaryToneColor(for: summary.tone))
+                Text(summary.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(palette.ink2)
+                Text(summary.recommendation)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(palette.ink3)
+                HStack(spacing: 8) {
+                    if appSession.effectiveLiveMode != .cloudKit && !appSession.isEphemeral {
+                        actionButton("用 iCloud") { applyLiveMode(.cloudKit) }
+                            .disabled(isBusy)
+                    }
+                    if appSession.syncSettings.folderTarget != nil {
+                        actionButton(isBusy ? "备份中…" : "立即备份") { backupToFolder() }
+                            .disabled(isBusy)
+                    }
+                    if currentServerLiveStatus?.state == .contractReady, !appSession.serverAutoSyncEnabled {
+                        actionButton("打开自动同步") {
+                            appSession.setServerAutoSyncEnabled(true)
+                            statusMessage = "已打开自动同步。"
+                        }
+                        .disabled(isBusy)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .emptyCard(palette, radius: 12)
+        }
+    }
+
     private var liveSyncSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("实时同步")
@@ -183,62 +227,69 @@ struct SyncSettingsView: View {
     }
 
     private var liveSyncStatusSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("provider 状态")
-                    .font(.system(size: 12, weight: .bold))
-                    .kerning(1.4)
+        DisclosureGroup(isExpanded: $showAdvancedStatus) {
+            VStack(alignment: .leading, spacing: 10) {
+                if appSession.liveSyncStatuses.isEmpty, appSession.isRefreshingLiveSyncStatuses {
+                    Text("正在探测 iCloud 与 Empty Cloud 状态…")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(palette.ink3)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .emptyCard(palette, radius: 12)
+                } else {
+                    ForEach(appSession.liveSyncStatuses, id: \.kind) { status in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text(status.title)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(palette.ink)
+                                Text(status.state.badgeTitle)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(badgeForeground(for: status.state))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(badgeBackground(for: status.state), in: Capsule())
+                                Spacer()
+                                Text(status.checkedAt.formatted(date: .omitted, time: .shortened))
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(palette.ink3)
+                            }
+                            Text(status.detail)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(palette.ink2)
+                            if !status.features.isEmpty {
+                                Text("features · \(status.features.joined(separator: ", "))")
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(palette.ink3)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .emptyCard(palette, radius: 12)
+                    }
+                }
+                Text("这些状态主要给排查问题用。平时能正常同步时，可以不用展开。")
+                    .font(.system(size: 10.5))
                     .foregroundStyle(palette.ink3)
+            }
+            .padding(.top, 10)
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("高级状态与排查")
+                        .font(.system(size: 12, weight: .bold))
+                        .kerning(1.4)
+                        .foregroundStyle(palette.ink3)
+                    Text("如果只是正常使用，这部分可以忽略。")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(palette.ink3)
+                }
                 Spacer()
                 actionButton(appSession.isRefreshingLiveSyncStatuses ? "探测中…" : "刷新状态") {
                     refreshLiveSyncStatuses()
                 }
                 .disabled(isBusy || appSession.isRefreshingLiveSyncStatuses)
             }
-
-            if appSession.liveSyncStatuses.isEmpty, appSession.isRefreshingLiveSyncStatuses {
-                Text("正在探测 iCloud 与 Empty Cloud live sync 能力…")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(palette.ink3)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .emptyCard(palette, radius: 12)
-            } else {
-                ForEach(appSession.liveSyncStatuses, id: \.kind) { status in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Text(status.title)
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(palette.ink)
-                            Text(status.state.badgeTitle)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(badgeForeground(for: status.state))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(badgeBackground(for: status.state), in: Capsule())
-                            Spacer()
-                            Text(status.checkedAt.formatted(date: .omitted, time: .shortened))
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(palette.ink3)
-                        }
-                        Text(status.detail)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(palette.ink2)
-                        if !status.features.isEmpty {
-                            Text("features · \(status.features.joined(separator: ", "))")
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(palette.ink3)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .emptyCard(palette, radius: 12)
-                }
-            }
-
-            Text("Empty Cloud 真正进入 live mode 前，server 需要在 `/v1/health` 的 `features` 里声明 `reader-live-sync-v1`，并实现 pull / push 两个 delta 端点。")
-                .font(.system(size: 10.5))
-                .foregroundStyle(palette.ink3)
         }
     }
 
@@ -249,7 +300,7 @@ struct SyncSettingsView: View {
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
             VStack(alignment: .leading, spacing: 10) {
-                Text("选择任意 Files / File Provider 文件夹：iCloud Drive、Dropbox、OneDrive、Google Drive、SMB 或 NAS 都可以。")
+                Text("如果你只想“自己选一个网盘或硬盘目录”，就用这个。它更像手动备份，不是实时同步。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(palette.ink2)
                 if let target = appSession.syncSettings.folderTarget {
@@ -290,7 +341,7 @@ struct SyncSettingsView: View {
                 } else {
                     actionButton("选择文件夹") { isPickingFolder = true }
                 }
-                Text("文件夹路径当前是“可恢复快照”，不是实时双向合并。恢复时以你主动选择的快照为准，做 merge / upsert，不删除本机额外数据。")
+                Text("适合 Dropbox / OneDrive / Google Drive / SMB / NAS 等目录型存放位置。恢复时只会合并读者数据，不会导入正文与 embedding。")
                     .font(.system(size: 10.5))
                     .foregroundStyle(palette.ink3)
             }
@@ -299,14 +350,15 @@ struct SyncSettingsView: View {
 
     private var serverBackupSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Empty Cloud / 自建 Server")
+            Text("自建同步 / Empty Cloud")
                 .font(.system(size: 12, weight: .bold))
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
             VStack(alignment: .leading, spacing: 10) {
-                Text("这一层先走 snapshot API：你可以把读者快照推到兼容的 HTTPS 服务，再从同一 namespace 拉回。只有当 server 额外声明 `reader-live-sync-v1` 时，才值得进一步切成真正的 live sync mode。")
+                Text("如果你以后想在 Apple 之外也能同步，主要看这一栏。最简单的用法：填地址 → 测试连接 → 打开自动同步。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(palette.ink2)
+
                 VStack(alignment: .leading, spacing: 8) {
                     labeledField("Base URL", placeholder: "https://sync.example.com", text: $serverBaseURL)
                     labeledField("Namespace", placeholder: "default", text: $serverNamespace)
@@ -318,45 +370,19 @@ struct SyncSettingsView: View {
 
                 if let target = appSession.syncSettings.serverTarget {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("已保存目标 · \(target.displayName) / \(target.namespace)")
+                        Text("已保存目标 · \(target.displayName)")
                             .font(.system(size: 12.5, weight: .bold))
                             .foregroundStyle(palette.ink)
-                        Text("鉴权 · \(target.authMode.title)")
+                        Text("命名空间 · \(target.namespace) · \(target.authMode.title)")
                             .font(.system(size: 10.5))
                             .foregroundStyle(palette.ink3)
-                        if let lastValidatedAt = target.lastValidatedAt {
-                            Text("上次联通性检查 · \(lastValidatedAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(palette.ink3)
-                        }
-                        if let lastSnapshotAt = target.lastSnapshotAt {
-                            Text("上次 server 备份 · \(lastSnapshotAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(palette.ink3)
-                        }
-                        if let lastLivePullAt = target.lastLivePullAt {
-                            Text("上次增量拉取 · \(lastLivePullAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(palette.ink3)
-                        }
-                        if let lastLivePushAt = target.lastLivePushAt {
-                            Text("上次增量推送 · \(lastLivePushAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(palette.ink3)
-                        }
                         if let lastAutoSyncAt = target.lastAutoSyncAt {
-                            Text("上次自动同步 · \(lastAutoSyncAt.formatted(date: .abbreviated, time: .shortened))")
+                            Text("最近自动同步 · \(lastAutoSyncAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(palette.ink3)
-                        }
-                        if let shortCursor = target.shortCursor {
-                            Text("当前 cursor · \(shortCursor)")
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(palette.ink3)
-                        }
-                        if let shortFingerprint = target.shortFingerprint {
-                            Text("上次指纹 · \(shortFingerprint)")
-                                .font(.system(size: 10.5, design: .monospaced))
+                        } else if let lastSnapshotAt = target.lastSnapshotAt {
+                            Text("最近 server 备份 · \(lastSnapshotAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.system(size: 10.5))
                                 .foregroundStyle(palette.ink3)
                         }
                     }
@@ -370,16 +396,16 @@ struct SyncSettingsView: View {
                         .disabled(isBusy)
                     actionButton(isBusy ? "检查中…" : "测试连接") { testServerConnection() }
                         .disabled(isBusy)
-                    actionButton(isBusy ? "上传中…" : "上传快照") { backupToServer() }
+                    actionButton(isBusy ? "上传中…" : "上传备份") { backupToServer() }
                         .disabled(isBusy)
-                    actionButton(isBusy ? "恢复中…" : "恢复最新") { confirmServerRestore = true }
+                    actionButton(isBusy ? "恢复中…" : "恢复备份") { confirmServerRestore = true }
                         .disabled(isBusy)
                 }
 
                 if let status = currentServerLiveStatus {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Text("live 协调器")
+                            Text("自动同步")
                                 .font(.system(size: 12.5, weight: .bold))
                                 .foregroundStyle(palette.ink)
                             Text(status.state.badgeTitle)
@@ -389,19 +415,20 @@ struct SyncSettingsView: View {
                                 .padding(.vertical, 3)
                                 .background(badgeBackground(for: status.state), in: Capsule())
                         }
-                        Text("当前 coordinator 会把 synced store 捕获成 full-snapshot delta，再走 pull / push 契约；在没有本地 mutation journal 前，删除靠 full snapshot 缺席来表达。")
+                        Text(simpleServerStatusMessage(for: status))
                             .font(.system(size: 11.5))
                             .foregroundStyle(palette.ink2)
+
                         if status.state == .contractReady {
                             Toggle(isOn: Binding(
                                 get: { appSession.serverAutoSyncEnabled },
                                 set: { appSession.setServerAutoSyncEnabled($0) }
                             )) {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("自动同步")
+                                    Text("打开自动同步")
                                         .font(.system(size: 12, weight: .bold))
                                         .foregroundStyle(palette.ink)
-                                    Text("仅在前台运行；每 \(appSession.serverAutoSyncIntervalSeconds) 秒自动拉取并按需推送 full-snapshot delta。")
+                                    Text("应用在前台时，会定时拉取；如果本地有变化，再自动推送。")
                                         .font(.system(size: 10.5))
                                         .foregroundStyle(palette.ink3)
                                 }
@@ -418,9 +445,7 @@ struct SyncSettingsView: View {
                             }
 
                             if appSession.autoSyncRuntime.isEnabled {
-                                Text(appSession.autoSyncRuntime.isRunning
-                                     ? "自动同步正在运行 · \(appSession.autoSyncRuntime.lastTrigger ?? "…")"
-                                     : "自动同步已待命")
+                                Text(appSession.autoSyncRuntime.isRunning ? "自动同步正在运行" : "自动同步已待命")
                                     .font(.system(size: 10.5))
                                     .foregroundStyle(appSession.autoSyncRuntime.isRunning ? palette.accent : palette.ink3)
                                 if let lastError = appSession.autoSyncRuntime.lastError {
@@ -429,35 +454,67 @@ struct SyncSettingsView: View {
                                         .foregroundStyle(.red)
                                 }
                             }
-
-                            HStack(spacing: 8) {
-                                actionButton(isBusy ? "拉取中…" : "拉取增量") { pullFromLiveServer() }
-                                    .disabled(isBusy)
-                                actionButton(isBusy ? "推送中…" : "推送当前库") { pushToLiveServer() }
-                                    .disabled(isBusy)
-                                actionButton(isBusy ? "同步中…" : "双向同步") { syncLiveServer() }
-                                    .disabled(isBusy)
-                                actionButton(isBusy ? "自动中…" : "立即自动同步") { runServerAutoSyncNow() }
-                                    .disabled(isBusy)
-                            }
-                            Button(role: .destructive) {
-                                appSession.resetServerLiveCursor()
-                                statusMessage = "已清空 live sync cursor；下一次可改走 full pull。"
-                            } label: {
-                                Text("重置 live cursor")
-                                    .font(.system(size: 11.5, weight: .bold))
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            Text("只有当 server 在 `/v1/health.features` 声明 `reader-live-sync-v1` 时，才会开放 pull / push / 双向同步。")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(palette.ink3)
                         }
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .emptyCard(palette, radius: 12)
+
+                    DisclosureGroup(isExpanded: $showAdvancedServer) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if let target = appSession.syncSettings.serverTarget {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    if let lastValidatedAt = target.lastValidatedAt {
+                                        Text("上次联通性检查 · \(lastValidatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    }
+                                    if let lastLivePullAt = target.lastLivePullAt {
+                                        Text("上次增量拉取 · \(lastLivePullAt.formatted(date: .abbreviated, time: .shortened))")
+                                    }
+                                    if let lastLivePushAt = target.lastLivePushAt {
+                                        Text("上次增量推送 · \(lastLivePushAt.formatted(date: .abbreviated, time: .shortened))")
+                                    }
+                                    if let shortCursor = target.shortCursor {
+                                        Text("当前 cursor · \(shortCursor)")
+                                    }
+                                    if let shortFingerprint = target.shortFingerprint {
+                                        Text("上次指纹 · \(shortFingerprint)")
+                                    }
+                                }
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(palette.ink3)
+                            }
+
+                            if status.state == .contractReady {
+                                Text("手动控制")
+                                    .font(.system(size: 11.5, weight: .bold))
+                                    .foregroundStyle(palette.ink)
+                                HStack(spacing: 8) {
+                                    actionButton(isBusy ? "拉取中…" : "拉取增量") { pullFromLiveServer() }
+                                        .disabled(isBusy)
+                                    actionButton(isBusy ? "推送中…" : "推送当前库") { pushToLiveServer() }
+                                        .disabled(isBusy)
+                                    actionButton(isBusy ? "同步中…" : "双向同步") { syncLiveServer() }
+                                        .disabled(isBusy)
+                                    actionButton(isBusy ? "自动中…" : "立即自动同步") { runServerAutoSyncNow() }
+                                        .disabled(isBusy)
+                                }
+                                Button(role: .destructive) {
+                                    appSession.resetServerLiveCursor()
+                                    statusMessage = "已清空 live sync cursor；下一次会重新完整拉取。"
+                                } label: {
+                                    Text("重置 live cursor")
+                                        .font(.system(size: 11.5, weight: .bold))
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.top, 10)
+                    } label: {
+                        Text("高级：查看详细状态 / 手动控制")
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(palette.ink3)
+                    }
                 }
 
                 Button(role: .destructive) {
@@ -470,20 +527,17 @@ struct SyncSettingsView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                Text("snapshot 协议固定为 `GET /v1/health` 与 `PUT/GET /v1/reader-snapshots/{namespace}/latest`。future live sync 协议会额外使用 `POST /v1/reader-live-sync/{namespace}/pull|push`；当前 coordinator 已可手动跑这两条路。")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(palette.ink3)
             }
         }
     }
 
     private var roadmapSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("后续 provider")
+            Text("后面还会继续简化")
                 .font(.system(size: 12, weight: .bold))
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
-            Text("下一步会在同一套 delta 契约上接真正的 Empty Cloud live sync coordinator；Passkey 先做账号登录与密钥封装层，Walrus 仍保持可选导出 / 备份，不把钱包与存储绑死。")
+            Text("接下来会继续补更细粒度的同步记录、后台重试和 Passkey 登录。对日常使用来说，你现在主要记住三件事就够了：单机就留在本机，多 Apple 设备就用 iCloud，跨平台 / 自建就填 server 再开自动同步。")
                 .font(.system(size: 11.5))
                 .foregroundStyle(palette.ink2)
                 .padding(12)
@@ -553,6 +607,32 @@ struct SyncSettingsView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    private func summaryToneColor(for tone: SyncUsageTone) -> Color {
+        switch tone {
+        case .accent:
+            palette.accent
+        case .neutral:
+            palette.ink
+        case .caution:
+            .red
+        }
+    }
+
+    private func simpleServerStatusMessage(for status: LiveSyncProviderStatus) -> String {
+        switch status.state {
+        case .contractReady:
+            return "这台 server 已经具备同步契约。日常只要打开自动同步，后面基本不用再手动管。"
+        case .snapshotOnly:
+            return "这台 server 目前更适合作为云端备份；还没有到自动同步那一步。"
+        case .setupRequired:
+            return "先保存目标并测试连接；通过后，这里才会告诉你能不能开自动同步。"
+        case .unavailable:
+            return "最近一次探测没有成功。先点一次“测试连接”，看看是不是地址、token 或 server 本身的问题。"
+        case .active, .available:
+            return status.detail
+        }
     }
 
     private func badgeBackground(for state: LiveSyncProviderState) -> Color {

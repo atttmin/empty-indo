@@ -26,7 +26,8 @@ final class AppSession: ObservableObject {
 
     init(isEphemeral override: Bool? = nil) {
         let process = ProcessInfo.processInfo
-        let inferredEphemeral = process.environment["XCTestConfigurationFilePath"] != nil
+        let inferredEphemeral =
+            process.environment["XCTestConfigurationFilePath"] != nil
             || process.arguments.contains("-ScreenshotCleanRoom")
         isEphemeral = override ?? inferredEphemeral
         let loadedSettings = SyncSettings.load()
@@ -72,6 +73,16 @@ final class AppSession: ObservableObject {
 
     var serverAutoSyncIntervalSeconds: Int {
         syncSettings.serverTarget?.clampedAutoSyncIntervalSeconds ?? 120
+    }
+
+    var syncUsageSummary: SyncUsageSummary {
+        SyncUsageSummaryBuilder.make(
+            liveMode: effectiveLiveMode,
+            folderTarget: syncSettings.folderTarget,
+            serverTarget: syncSettings.serverTarget,
+            cloudStatus: liveSyncStatuses.first { $0.kind == .cloudKit },
+            serverStatus: liveSyncStatuses.first { $0.kind == .server }
+        )
     }
 
     func handleScenePhase(_ phase: ScenePhase) {
@@ -411,9 +422,10 @@ final class AppSession: ObservableObject {
 
     private var shouldRunAutoSyncLoop: Bool {
         guard !isEphemeral,
-              currentScenePhase == .active,
-              serverAutoSyncEnabled,
-              currentServerStatus?.state == .contractReady else {
+            currentScenePhase == .active,
+            serverAutoSyncEnabled,
+            currentServerStatus?.state == .contractReady
+        else {
             return false
         }
         return true

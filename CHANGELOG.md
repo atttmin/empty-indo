@@ -212,6 +212,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   servers can now persist a cursor and manually run live `pull`, `push`
   (current synced store as a full-snapshot delta), and `sync` (pull then
   push) from `SyncSettingsView`.
+- Added a simpler sync experience on top of the same architecture:
+  `SyncUsageSummary` now collapses the choices into plain-language guidance
+  (“use iCloud”, “use a folder backup”, or “fill a server and turn on auto
+  sync”), advanced provider diagnostics are tucked behind disclosure, and
+  contract-ready servers can now run a foreground auto-sync loop that pulls on
+  a timer and only pushes when the synced snapshot fingerprint changes.
 ### Added (earlier rounds)
 
 - iOS 随身伴读 aligned with the 02 iOS prototype:
