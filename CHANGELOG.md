@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
-- Empty Cloud / 自建 server 的前台自动同步不再总是回推整库 full snapshot：客户端现在持久化本地 `SyncMutationJournal` baseline，pull 后只重放仍未推送的本地 upsert / tombstone，自动同步与手动 push 也都会在设置页显示当前待同步变化数量。
+- Empty Cloud / 自建 server 的前台自动同步不再总是回推整库 full snapshot：客户端现在持久化本地 `SyncMutationJournal` baseline，pull 后只重放仍未推送的本地 upsert / tombstone，并在失败时排队自动重试；设置页也会直接显示待同步变化数量与下次重试时间。
 
 ### Fixed
 

@@ -25,12 +25,27 @@ nonisolated enum SyncUsageSummaryBuilder {
         serverTarget: SyncSettings.ServerBackupTarget?,
         cloudStatus: LiveSyncProviderStatus?,
         serverStatus: LiveSyncProviderStatus?,
-        pendingServerChanges: Int? = nil
+        pendingServerChanges: Int? = nil,
+        pendingServerRetryAt: Date? = nil
     ) -> SyncUsageSummary {
         if let serverTarget {
             switch serverStatus?.state {
             case .contractReady:
                 if serverTarget.autoSyncEnabled {
+                    if let pendingServerRetryAt {
+                        let detail: String
+                        if let pendingServerChanges, pendingServerChanges > 0 {
+                            detail = "最近一次自动同步没成功，系统会在 \(pendingServerRetryAt.formatted(date: .omitted, time: .shortened)) 再试一次；当前还有 \(pendingServerChanges) 处待同步变化。"
+                        } else {
+                            detail = "最近一次自动同步没成功，系统会在 \(pendingServerRetryAt.formatted(date: .omitted, time: .shortened)) 再试一次。"
+                        }
+                        return SyncUsageSummary(
+                            title: "自建同步已排队重试",
+                            detail: detail,
+                            recommendation: "先不用改设置；等重试时间到了看一下。如果还失败，再点“测试连接”。",
+                            tone: .caution
+                        )
+                    }
                     let detail: String
                     if let pendingServerChanges, pendingServerChanges > 0 {
                         detail = "这套 server 已支持自动同步。本机现在还有 \(pendingServerChanges) 处待同步变化；前台自动同步会继续拉取并推送。"

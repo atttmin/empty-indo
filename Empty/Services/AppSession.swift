@@ -83,7 +83,8 @@ final class AppSession: ObservableObject {
             serverTarget: syncSettings.serverTarget,
             cloudStatus: liveSyncStatuses.first { $0.kind == .cloudKit },
             serverStatus: liveSyncStatuses.first { $0.kind == .server },
-            pendingServerChanges: autoSyncRuntime.pendingChangeCount
+            pendingServerChanges: autoSyncRuntime.pendingChangeCount,
+            pendingServerRetryAt: autoSyncRuntime.nextRetryAt
         )
     }
 
@@ -218,7 +219,10 @@ final class AppSession: ObservableObject {
             autoSyncEnabled: previous?.autoSyncEnabled ?? false,
             autoSyncIntervalSeconds: previous?.clampedAutoSyncIntervalSeconds ?? 120,
             lastAutoSyncAt: identityChanged ? nil : previous?.lastAutoSyncAt,
-            lastAutoSyncFingerprint: identityChanged ? nil : previous?.lastAutoSyncFingerprint
+            lastAutoSyncFingerprint: identityChanged ? nil : previous?.lastAutoSyncFingerprint,
+            consecutiveAutoSyncFailures: identityChanged ? 0 : previous?.consecutiveAutoSyncFailures ?? 0,
+            nextAutoRetryAt: identityChanged ? nil : previous?.nextAutoRetryAt,
+            lastAutoSyncError: identityChanged ? nil : previous?.lastAutoSyncError
         )
 
         if identityChanged {
@@ -292,6 +296,9 @@ final class AppSession: ObservableObject {
         guard var target = syncSettings.serverTarget else { return }
         target.liveCursor = nil
         target.lastAutoSyncFingerprint = nil
+        target.consecutiveAutoSyncFailures = 0
+        target.nextAutoRetryAt = nil
+        target.lastAutoSyncError = nil
         var updated = syncSettings
         updated.serverTarget = target
         persist(updated)
@@ -303,10 +310,14 @@ final class AppSession: ObservableObject {
     func setServerAutoSyncEnabled(_ enabled: Bool) {
         guard var target = syncSettings.serverTarget else { return }
         target.autoSyncEnabled = enabled
+        if !enabled {
+            target.consecutiveAutoSyncFailures = 0
+            target.nextAutoRetryAt = nil
+            target.lastAutoSyncError = nil
+        }
         var updated = syncSettings
         updated.serverTarget = target
         persist(updated)
-        refreshAutoSyncRuntime()
         restartAutoSyncLoopIfNeeded()
     }
 
@@ -316,7 +327,6 @@ final class AppSession: ObservableObject {
         var updated = syncSettings
         updated.serverTarget = target
         persist(updated)
-        refreshAutoSyncRuntime()
         restartAutoSyncLoopIfNeeded()
     }
 
@@ -493,19 +503,26 @@ final class AppSession: ObservableObject {
             autoSyncRuntime.isRunning = false
         }
 
-        let summary = try await performServerLiveSync(forcePush: force)
-        guard var refreshedTarget = syncSettings.serverTarget else {
-            return nil
-        }
-        refreshedTarget.lastAutoSyncAt = Date()
-        var updated = syncSettings
-        updated.serverTarget = refreshedTarget
-        persist(updated)
+        do {
+            let summary = try await performServerLiveSync(forcePush: force)
+            let syncedAt = summary.push.changeCount > 0 ? summary.push.pushedAt : summary.pull.pulledAt
+            markServerAutoSyncSucceeded(at: syncedAt)
 
-        autoSyncRuntime.lastSyncedAt = refreshedTarget.lastAutoSyncAt
-        autoSyncRuntime.lastFingerprintPrefix = refreshedTarget.shortFingerprint
-        let action = summary.push.changeCount > 0 || (force && summary.push.wasFullSnapshot) ? "pull + push" : "pull only"
-        return "自动同步完成（\(action)）。"
+            guard let refreshedTarget = syncSettings.serverTarget else {
+                return nil
+            }
+            autoSyncRuntime.lastSyncedAt = refreshedTarget.lastAutoSyncAt
+            autoSyncRuntime.lastFingerprintPrefix = refreshedTarget.shortFingerprint
+            let action = summary.push.changeCount > 0 || (force && summary.push.wasFullSnapshot) ? "pull + push" : "pull only"
+            return "自动同步完成（\(action)）。"
+        } catch {
+            if syncSettings.serverTarget?.autoSyncEnabled == true {
+                markServerAutoSyncFailed(error)
+            } else {
+                autoSyncRuntime.lastError = error.localizedDescription
+            }
+            throw error
+        }
     }
 
     private var currentServerStatus: LiveSyncProviderStatus? {
@@ -536,15 +553,17 @@ final class AppSession: ObservableObject {
         guard shouldRunAutoSyncLoop else { return }
         autoSyncTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            do {
-                _ = try await self.runAutomaticServerSync(force: false, trigger: "enabled")
-            } catch {
-                self.autoSyncRuntime.lastError = error.localizedDescription
+            if self.shouldAttemptAutoSyncNow() {
+                do {
+                    _ = try await self.runAutomaticServerSync(force: false, trigger: "enabled")
+                } catch {
+                    self.autoSyncRuntime.lastError = error.localizedDescription
+                }
             }
             while !Task.isCancelled {
-                let interval = UInt64(self.serverAutoSyncIntervalSeconds) * 1_000_000_000
-                try? await Task.sleep(nanoseconds: interval)
+                try? await Task.sleep(nanoseconds: self.nextAutoSyncDelayNanoseconds())
                 if Task.isCancelled || !self.shouldRunAutoSyncLoop { return }
+                guard self.shouldAttemptAutoSyncNow() else { continue }
                 do {
                     _ = try await self.runAutomaticServerSync(force: false, trigger: "timer")
                 } catch {
@@ -563,6 +582,22 @@ final class AppSession: ObservableObject {
             return false
         }
         return true
+    }
+
+    private func shouldAttemptAutoSyncNow(at now: Date = Date()) -> Bool {
+        guard shouldRunAutoSyncLoop else { return false }
+        guard let retryAt = syncSettings.serverTarget?.nextAutoRetryAt else {
+            return true
+        }
+        return retryAt <= now
+    }
+
+    private func nextAutoSyncDelayNanoseconds(now: Date = Date()) -> UInt64 {
+        if let retryAt = syncSettings.serverTarget?.nextAutoRetryAt {
+            let seconds = max(1, ceil(retryAt.timeIntervalSince(now)))
+            return UInt64(seconds * 1_000_000_000)
+        }
+        return UInt64(max(serverAutoSyncIntervalSeconds, 1)) * 1_000_000_000
     }
 
     private func refreshLiveSyncStatusesSoon() {
@@ -590,6 +625,33 @@ final class AppSession: ObservableObject {
         )
     }
 
+    private func markServerAutoSyncSucceeded(at date: Date) {
+        guard var target = syncSettings.serverTarget else { return }
+        target.lastAutoSyncAt = date
+        target.consecutiveAutoSyncFailures = 0
+        target.nextAutoRetryAt = nil
+        target.lastAutoSyncError = nil
+        var updated = syncSettings
+        updated.serverTarget = target
+        persist(updated)
+    }
+
+    private func markServerAutoSyncFailed(_ error: Error, at date: Date = Date()) {
+        guard var target = syncSettings.serverTarget else {
+            autoSyncRuntime.lastError = error.localizedDescription
+            return
+        }
+        let nextFailureCount = target.autoSyncEnabled ? (target.consecutiveAutoSyncFailures + 1) : 0
+        target.consecutiveAutoSyncFailures = nextFailureCount
+        target.nextAutoRetryAt = target.autoSyncEnabled
+            ? ServerSyncRetryPolicy.nextRetryDate(afterFailure: nextFailureCount, now: date)
+            : nil
+        target.lastAutoSyncError = error.localizedDescription
+        var updated = syncSettings
+        updated.serverTarget = target
+        persist(updated)
+    }
+
     private func updateServerAutoSyncFingerprint(using snapshot: SyncSnapshot) throws {
         guard var target = syncSettings.serverTarget else { return }
         target.lastAutoSyncFingerprint = try snapshot.stableFingerprint()
@@ -610,6 +672,9 @@ final class AppSession: ObservableObject {
         autoSyncRuntime.isEnabled = syncSettings.serverTarget?.autoSyncEnabled ?? false
         autoSyncRuntime.lastSyncedAt = syncSettings.serverTarget?.lastAutoSyncAt
         autoSyncRuntime.lastFingerprintPrefix = syncSettings.serverTarget?.shortFingerprint
+        autoSyncRuntime.lastError = syncSettings.serverTarget?.lastAutoSyncError
+        autoSyncRuntime.consecutiveFailureCount = syncSettings.serverTarget?.consecutiveAutoSyncFailures ?? 0
+        autoSyncRuntime.nextRetryAt = syncSettings.serverTarget?.nextAutoRetryAt
         if autoSyncRuntime.isEnabled == false {
             autoSyncRuntime.lastTrigger = nil
         }

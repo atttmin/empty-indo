@@ -33,7 +33,10 @@ struct ServerSnapshotClientTests {
                 autoSyncEnabled: true,
                 autoSyncIntervalSeconds: 180,
                 lastAutoSyncAt: Date(timeIntervalSince1970: 50),
-                lastAutoSyncFingerprint: "abcdef1234567890"
+                lastAutoSyncFingerprint: "abcdef1234567890",
+                consecutiveAutoSyncFailures: 2,
+                nextAutoRetryAt: Date(timeIntervalSince1970: 80),
+                lastAutoSyncError: "timeout"
             )
         )
         settings.save(defaults: defaults)
@@ -50,6 +53,9 @@ struct ServerSnapshotClientTests {
         #expect(loaded.serverTarget?.clampedAutoSyncIntervalSeconds == 180)
         #expect(loaded.serverTarget?.lastAutoSyncAt == Date(timeIntervalSince1970: 50))
         #expect(loaded.serverTarget?.shortFingerprint == "abcdef123456")
+        #expect(loaded.serverTarget?.consecutiveAutoSyncFailures == 2)
+        #expect(loaded.serverTarget?.nextAutoRetryAt == Date(timeIntervalSince1970: 80))
+        #expect(loaded.serverTarget?.lastAutoSyncError == "timeout")
     }
 
     @Test func syncSettingsLoadsLegacyV1Payload() throws {

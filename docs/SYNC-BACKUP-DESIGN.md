@@ -233,7 +233,7 @@ HTTP 端点预留为：
 - 删除通过 journal diff 生成 `LiveSyncTombstone`
 - `pull` 会先 merge record，再应用 tombstone 删除
 - cursor、上次 pull 时间、上次 push 时间、上次 baseline 指纹持久化在 `SyncSettings.serverTarget`
-- 自动同步只在**前台**运行：定时 pull；若 journal 仍有本地变化，再做增量 push
+- 自动同步只在**前台**运行：定时 pull；若失败则按退避时间排队重试，若 journal 仍有本地变化，再做增量 push
 
 ---
 
@@ -268,11 +268,13 @@ HTTP 端点预留为：
 - `Empty/Services/SyncMutationJournal.swift`
   - 本地 baseline journal、delta/tombstone diff、per-server journal store
 - `Empty/Services/ServerAutoSyncState.swift`
-  - 前台自动同步 runtime 状态（含待同步变化计数）
+  - 前台自动同步 runtime 状态（含待同步变化计数、失败次数、下次重试时间）
+- `Empty/Services/ServerSyncRetryPolicy.swift`
+  - 前台自动同步的本地退避重试策略
 - `Empty/Services/SyncUsageSummary.swift`
   - 把同步状态折叠成用户更容易理解的 plain-language 总结
 - `Empty/Views/SyncSettingsView.swift`
-  - 同步与备份 UI + provider 状态探测 + 简化引导 + 高级手动控件
+  - 同步与备份 UI + provider 状态探测 + 简化引导 + 重试可见性 + 高级手动控件
 
 ### 修改
 
@@ -291,8 +293,8 @@ HTTP 端点预留为：
 
 ### Empty Cloud / 自建 server **完整后台 live sync**
 
-原因：虽然 cursor / delta / pull-push 契约、手动协调器、本地 mutation journal 与前台自动调度都已经在客户端成型，但还没有：
-- 真后台调度 / 重试
+原因：虽然 cursor / delta / pull-push 契约、手动协调器、本地 mutation journal、前台自动调度与本地重试队列都已经在客户端成型，但还没有：
+- 真后台调度
 - 真实冲突合并策略 UI
 - Passkey 账号与设备授权
 
@@ -301,6 +303,7 @@ HTTP 端点预留为：
 - `live sync contract`
 - `provider status probe`
 - `local mutation journal`
+- `foreground retry queue`
 - `manual live sync coordinator`
 - `foreground auto sync shell`
 
@@ -326,7 +329,7 @@ HTTP 端点预留为：
 
 - `ServerSyncProvider`
 - Passkey 登录
-- 后台 pull / push 调度与重试
+- 后台 pull / push 调度
 - 冲突合并与设备 tombstone
 - 对象存储放快照与 blob
 

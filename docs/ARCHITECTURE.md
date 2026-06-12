@@ -54,9 +54,9 @@ App 启动经 `AppSession` 读取 `SyncSettings`，再调用 `AppStores.makeCont
 - `pull`：`POST /v1/reader-live-sync/{namespace}/pull` → merge / tombstone apply
 - `push`：根据本地 journal baseline 只发送变更过的 upsert / tombstone；首次或强制同步时才退回 full-snapshot delta
 - `sync`：先 pull、把 pulled state 记为新 baseline，再把本地未推送变更重新覆盖回去并 push
-- `auto sync`：应用在前台时按间隔自动 pull；若 journal 里还有本地变化，再做增量 push
+- `auto sync`：应用在前台时按间隔自动 pull；若失败则按退避时间排队重试，若 journal 里还有本地变化再做增量 push
 
-这一步已经能让“自建 server 用户”基本照常使用，但仍**不是最终形态**：还没有后台重试队列、冲突策略 UI 或 Passkey 账号层。
+这一步已经能让“自建 server 用户”基本照常使用，但仍**不是最终形态**：还没有真正后台调度、冲突策略 UI 或 Passkey 账号层。
 
 ### Local Store（仅本机）
 

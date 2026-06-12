@@ -14,8 +14,14 @@ nonisolated struct ServerAutoSyncRuntimeState: Equatable, Sendable {
     var lastFingerprintPrefix: String?
     var pendingUpsertCount: Int = 0
     var pendingTombstoneCount: Int = 0
+    var consecutiveFailureCount: Int = 0
+    var nextRetryAt: Date?
 
     var pendingChangeCount: Int {
         pendingUpsertCount + pendingTombstoneCount
+    }
+
+    var isRetryQueued: Bool {
+        nextRetryAt != nil
     }
 }

@@ -377,7 +377,11 @@ struct SyncSettingsView: View {
                         Text("命名空间 · \(target.namespace) · \(target.authMode.title)")
                             .font(.system(size: 10.5))
                             .foregroundStyle(palette.ink3)
-                        if let lastAutoSyncAt = target.lastAutoSyncAt {
+                        if let nextRetryAt = target.nextAutoRetryAt {
+                            Text("已安排重试 · \(nextRetryAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.red)
+                        } else if let lastAutoSyncAt = target.lastAutoSyncAt {
                             Text("最近自动同步 · \(lastAutoSyncAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(palette.ink3)
@@ -416,7 +420,7 @@ struct SyncSettingsView: View {
                                 .padding(.vertical, 3)
                                 .background(badgeBackground(for: status.state), in: Capsule())
                         }
-                        Text(simpleServerStatusMessage(for: status))
+                        Text(simpleServerStatusMessage(for: status, retryAt: appSession.autoSyncRuntime.nextRetryAt))
                             .font(.system(size: 11.5))
                             .foregroundStyle(palette.ink2)
 
@@ -457,6 +461,11 @@ struct SyncSettingsView: View {
                                 Text(appSession.autoSyncRuntime.isRunning ? "自动同步正在运行" : "自动同步已待命")
                                     .font(.system(size: 10.5))
                                     .foregroundStyle(appSession.autoSyncRuntime.isRunning ? palette.accent : palette.ink3)
+                                if let nextRetryAt = appSession.autoSyncRuntime.nextRetryAt {
+                                    Text("上次没有成功；会在 \(nextRetryAt.formatted(date: .omitted, time: .shortened)) 自动重试。")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.red)
+                                }
                                 if let lastError = appSession.autoSyncRuntime.lastError {
                                     Text("最近错误 · \(lastError)")
                                         .font(.system(size: 10.5))
@@ -504,7 +513,7 @@ struct SyncSettingsView: View {
                                         .disabled(isBusy)
                                     actionButton(isBusy ? "同步中…" : "双向同步") { syncLiveServer() }
                                         .disabled(isBusy)
-                                    actionButton(isBusy ? "自动中…" : "立即自动同步") { runServerAutoSyncNow() }
+                                    actionButton(isBusy ? "自动中…" : (appSession.autoSyncRuntime.isRetryQueued ? "立即重试" : "立即自动同步")) { runServerAutoSyncNow() }
                                         .disabled(isBusy)
                                 }
                                 Button(role: .destructive) {
@@ -546,7 +555,7 @@ struct SyncSettingsView: View {
                 .font(.system(size: 12, weight: .bold))
                 .kerning(1.4)
                 .foregroundStyle(palette.ink3)
-            Text("接下来会继续补更细粒度的同步记录、后台重试和 Passkey 登录。对日常使用来说，你现在主要记住三件事就够了：单机就留在本机，多 Apple 设备就用 iCloud，跨平台 / 自建就填 server 再开自动同步。")
+            Text("接下来会继续补 Passkey 登录、更完整的后台调度，以及更明确的冲突处理。对日常使用来说，你现在主要记住三件事就够了：单机就留在本机，多 Apple 设备就用 iCloud，跨平台 / 自建就填 server 再开自动同步。")
                 .font(.system(size: 11.5))
                 .foregroundStyle(palette.ink2)
                 .padding(12)
@@ -629,9 +638,12 @@ struct SyncSettingsView: View {
         }
     }
 
-    private func simpleServerStatusMessage(for status: LiveSyncProviderStatus) -> String {
+    private func simpleServerStatusMessage(for status: LiveSyncProviderStatus, retryAt: Date?) -> String {
         switch status.state {
         case .contractReady:
+            if let retryAt {
+                return "这台 server 已具备同步契约。最近一次自动同步没成功，会在 \(retryAt.formatted(date: .omitted, time: .shortened)) 自动重试。"
+            }
             return "这台 server 已经具备同步契约。日常只要打开自动同步，后面基本不用再手动管。"
         case .snapshotOnly:
             return "这台 server 目前更适合作为云端备份；还没有到自动同步那一步。"
