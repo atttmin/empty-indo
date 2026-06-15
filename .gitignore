@@ -34,6 +34,9 @@ Package.resolved
 timeline.xctimeline
 playground.xcworkspace
 
+# Custom derived data paths used by local build scripts
+.derived-data/
+.derived-data-signed/
 # Fastlane
 fastlane/report.xml
 fastlane/Preview.html
