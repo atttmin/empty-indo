@@ -698,22 +698,29 @@ struct PagedChapterReaderView: View {
     }
 
     private func pageBackdrop(horizontalInset: CGFloat, verticalInset: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 24)
-            .fill(appearance.theme.pageFill(baseIsDark: palette.isDark))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24)
-                    .strokeBorder(
-                        appearance.theme.pageRule(baseIsDark: palette.isDark),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: palette.isDark ? .black.opacity(0.26) : Color.black.opacity(0.08),
-                radius: 16,
-                y: 7
-            )
-            .padding(.horizontal, horizontalInset * 0.46)
-            .padding(.vertical, verticalInset * 0.4)
+        PaperPageBackground(
+            fill: appearance.theme.pageFill(baseIsDark: palette.isDark),
+            isDark: palette.isDark
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .strokeBorder(
+                    appearance.theme.pageRule(baseIsDark: palette.isDark),
+                    lineWidth: 1
+                )
+        )
+        .shadow(
+            color: palette.isDark ? .black.opacity(0.28) : Color.black.opacity(0.10),
+            radius: 26,
+            y: 14
+        )
+        .shadow(
+            color: palette.isDark ? .black.opacity(0.16) : Color.black.opacity(0.05),
+            radius: 7,
+            y: 3
+        )
+        .padding(.horizontal, horizontalInset * 0.46)
+        .padding(.vertical, verticalInset * 0.4)
     }
 
     private func pageFooter(index: Int, count: Int) -> some View {
@@ -1178,22 +1185,29 @@ struct MacPagedChapterReaderView: View {
     }
 
     private func pageBackdrop(horizontalInset: CGFloat, verticalInset: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 24)
-            .fill(appearance.theme.pageFill(baseIsDark: palette.isDark))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24)
-                    .strokeBorder(
-                        appearance.theme.pageRule(baseIsDark: palette.isDark),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: palette.isDark ? .black.opacity(0.32) : Color.black.opacity(0.10),
-                radius: 18,
-                y: 8
-            )
-            .padding(.horizontal, horizontalInset * 0.42)
-            .padding(.vertical, verticalInset * 0.28)
+        PaperPageBackground(
+            fill: appearance.theme.pageFill(baseIsDark: palette.isDark),
+            isDark: palette.isDark
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .strokeBorder(
+                    appearance.theme.pageRule(baseIsDark: palette.isDark),
+                    lineWidth: 1
+                )
+        )
+        .shadow(
+            color: palette.isDark ? .black.opacity(0.34) : Color.black.opacity(0.12),
+            radius: 28,
+            y: 16
+        )
+        .shadow(
+            color: palette.isDark ? .black.opacity(0.18) : Color.black.opacity(0.06),
+            radius: 8,
+            y: 3
+        )
+        .padding(.horizontal, horizontalInset * 0.42)
+        .padding(.vertical, verticalInset * 0.28)
     }
 
     private func pageFooter(count: Int) -> some View {
@@ -1468,6 +1482,79 @@ private struct MacPageTextView: NSViewRepresentable {
     }
 }
 #endif
+
+// MARK: - Paper page background
+
+/// A rounded page surface with paper fill, subtle fiber texture, and inner
+/// edge shading that gives the card a tactile, book-like depth.
+private struct PaperPageBackground: View {
+    let fill: Color
+    let isDark: Bool
+    let cornerRadius: CGFloat = 24
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(fill)
+            .overlay(
+                PaperTextureOverlay(isDark: isDark)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            )
+            .overlay(
+                PaperInnerShadow(isDark: isDark)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            )
+    }
+}
+
+/// Very subtle randomized dots that break up the flat digital fill and read
+/// as paper fiber. Cached as a layer via `.drawingGroup()` so it does not
+/// re-render on every SwiftUI reconciliation.
+private struct PaperTextureOverlay: View {
+    let isDark: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let spacing: CGFloat = 4
+            for x in stride(from: 0, to: size.width, by: spacing) {
+                for y in stride(from: 0, to: size.height, by: spacing) {
+                    let jitterX = CGFloat.random(in: -1...1)
+                    let jitterY = CGFloat.random(in: -1...1)
+                    let opacity = Double.random(in: 0.001...0.025)
+                    let rect = CGRect(x: x + jitterX, y: y + jitterY, width: 0.7, height: 0.7)
+                    let color = isDark ? Color.white.opacity(opacity) : Color.black.opacity(opacity)
+                    context.fill(Path(rect), with: .color(color))
+                }
+            }
+        }
+        .drawingGroup()
+    }
+}
+
+/// Inner edge shadow + a gentle left-side page-stack shadow to suggest the
+/// page has thickness and sits on top of a stack of other pages.
+private struct PaperInnerShadow: View {
+    let isDark: Bool
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // Thin inner stroke to separate the page from the canvas.
+            RoundedRectangle(cornerRadius: 24)
+                .strokeBorder(Color.black.opacity(isDark ? 0.18 : 0.06), lineWidth: 1)
+
+            // Left-edge page-stack shadow.
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(isDark ? 0.18 : 0.05),
+                    Color.clear
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 14)
+            .allowsHitTesting(false)
+        }
+    }
+}
 
 private extension PagedColor {
     convenience init(hex: UInt32) {
