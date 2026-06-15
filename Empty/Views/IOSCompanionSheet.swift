@@ -21,6 +21,7 @@ struct IOSCompanionSheet: View {
     @Environment(\.emptyPalette) private var palette
     @Environment(\.modelContext) private var modelContext
     @FocusState private var inputFocused: Bool
+    @State private var expandedEvidenceMessageIDs: Set<UUID> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,6 +37,7 @@ struct IOSCompanionSheet: View {
         .background(palette.side)
         .presentationDetents([.fraction(0.66), .large])
         .presentationDragIndicator(.visible)
+        .presentationContentInteraction(.scrolls)
         .onAppear {
             // 追问 hand-off: the reader stages the question in the draft.
             if !model.draft.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -154,11 +156,34 @@ struct IOSCompanionSheet: View {
                         .padding(.vertical, 3)
                         .background(palette.accentSoft, in: RoundedRectangle(cornerRadius: 7))
                 }
+                if let focusText = message.focusText {
+                    Text("围绕：「\(focusText)」")
+                        .font(.system(size: 10.5, design: .serif))
+                        .foregroundStyle(palette.ink3)
+                        .lineLimit(3)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(palette.side, in: RoundedRectangle(cornerRadius: 9))
+                }
+                if let citation = message.citation {
+                    Text("引文：「\(citation)」")
+                        .font(.system(size: 10.8, design: .serif))
+                        .foregroundStyle(palette.accent)
+                        .lineLimit(4)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(palette.accentSoft, in: RoundedRectangle(cornerRadius: 9))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9)
+                                .strokeBorder(palette.accentSoft2, lineWidth: 1)
+                        )
+                }
                 Text(message.text)
                     .font(.system(size: 12.5))
                     .lineSpacing(4.5)
                     .foregroundStyle(palette.ink2)
                     .textSelection(.enabled)
+                evidenceSection(for: message)
                 ForEach(message.actions) { action in
                     Button {
                         if let book {
@@ -193,6 +218,7 @@ struct IOSCompanionSheet: View {
                     Text("原文 · \(source)")
                         .font(.system(size: 10))
                         .foregroundStyle(palette.accent)
+                        .lineLimit(2)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 3)
                         .background(palette.accentSoft, in: Capsule())
@@ -216,6 +242,124 @@ struct IOSCompanionSheet: View {
                 .strokeBorder(palette.line, lineWidth: 1)
             )
             .padding(.trailing, 28)
+        }
+    }
+    @ViewBuilder
+    private func evidenceSection(for message: CompanionModel.Message) -> some View {
+        if message.analysisSummary != nil || !message.evidenceBlocks.isEmpty {
+            let isExpanded = expandedEvidenceMessageIDs.contains(message.id)
+            let visibleBlocks = isExpanded ? message.evidenceBlocks : Array(message.evidenceBlocks.prefix(1))
+            let sections = CompanionModel.evidenceSections(from: visibleBlocks)
+            VStack(alignment: .leading, spacing: 7) {
+                if let summary = message.analysisSummary {
+                    Text(summary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(palette.accent)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background(palette.accentSoft, in: Capsule())
+                }
+                if !visibleBlocks.isEmpty {
+                    if shouldUseScrollableEvidence(message, isExpanded: isExpanded) {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            evidenceGroups(sections, expanded: isExpanded)
+                                .padding(.trailing, 2)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(maxHeight: 220)
+                    } else {
+                        evidenceGroups(sections, expanded: isExpanded)
+                    }
+                    if message.evidenceBlocks.count > 1 || message.evidenceBlocks.first?.body.count ?? 0 > 160 {
+                        Button(isExpanded ? "收起证据" : "展开证据") {
+                            toggleEvidence(for: message.id)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(palette.ink3)
+                    }
+                }
+            }
+        }
+    }
+
+    private func evidenceGroups(
+        _ sections: [CompanionModel.EvidenceSection],
+        expanded: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(sections) { section in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(section.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(palette.ink3)
+                    ForEach(section.blocks) { block in
+                        evidenceBlock(block, expanded: expanded)
+                    }
+                }
+            }
+        }
+    }
+
+    private func evidenceBlock(_ block: CompanionEvidenceBlock, expanded: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(block.kind.label)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(palette.accentSoft, in: Capsule())
+                Text(block.title)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(palette.ink)
+                    .lineLimit(2)
+            }
+            evidenceBodyText(for: block)
+                .font(.system(size: 10.5))
+                .lineSpacing(3)
+                .lineLimit(expanded ? nil : 4)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.side, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func evidenceBodyText(for block: CompanionEvidenceBlock) -> Text {
+        let ranges = CompanionModel.emphasisRanges(in: block.body, matching: block.emphasisTerms)
+        guard !ranges.isEmpty else { return Text(block.body).foregroundColor(palette.ink3) }
+        var cursor = block.body.startIndex
+        var text = Text("")
+        for range in ranges {
+            if cursor < range.lowerBound {
+                text = text + Text(String(block.body[cursor..<range.lowerBound])).foregroundColor(palette.ink3)
+            }
+            text = text + Text(String(block.body[range]))
+                .foregroundColor(palette.accent)
+                .fontWeight(.semibold)
+                .underline(true, color: palette.accent)
+            cursor = range.upperBound
+        }
+        if cursor < block.body.endIndex {
+            text = text + Text(String(block.body[cursor...])).foregroundColor(palette.ink3)
+        }
+        return text
+    }
+
+    private func shouldUseScrollableEvidence(
+        _ message: CompanionModel.Message,
+        isExpanded: Bool
+    ) -> Bool {
+        guard isExpanded else { return false }
+        let totalBodyCount = message.evidenceBlocks.reduce(0) { $0 + $1.body.count }
+        return message.evidenceBlocks.count > 2 || totalBodyCount > 420
+    }
+
+    private func toggleEvidence(for messageID: UUID) {
+        if expandedEvidenceMessageIDs.contains(messageID) {
+            expandedEvidenceMessageIDs.remove(messageID)
+        } else {
+            expandedEvidenceMessageIDs.insert(messageID)
         }
     }
 

@@ -26,10 +26,10 @@ struct PersistenceTests {
 
 
     @Test func memoryModelsStayInTheirIntendedStores() {
-        #expect(AppStores.placement(for: MemoryItem.self) == .synced)
+        #expect(AppStores.placement(for: MemoryItem.self) == .readerData)
         #expect(AppStores.placement(for: MemoryEmbedding.self) == .local)
         #expect(AppStores.placement(for: Chapter.self) == .local)
-        #expect(AppStores.placement(for: Book.self) == .synced)
+        #expect(AppStores.placement(for: Book.self) == .readerData)
     }
 
     @Test func deletingBookCascadesToHighlightsAndSessions() throws {

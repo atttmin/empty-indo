@@ -55,6 +55,11 @@ struct MacReaderScreen: View {
     @AppStorage("reader.lineSpacing") private var lineSpacing: Double = 1.8
     @AppStorage("reader.theme") private var readerTheme: ReaderTheme = .paper
     @AppStorage("reader.font") private var readerFont: ReaderFont = .serif
+    @AppStorage("reader.contentWidth") private var readerContentWidth: ReaderContentWidth = .medium
+    @AppStorage("reader.firstLineIndent") private var readerFirstLineIndent: ReaderFirstLineIndent = .classic
+    @AppStorage("reader.paragraphSpacing") private var readerParagraphSpacing: ReaderParagraphSpacingStyle = .book
+    @AppStorage("reader.textAlignment") private var readerTextAlignment: ReaderTextAlignmentStyle = .justified
+    @AppStorage("reader.chapterOpening") private var readerChapterOpening: ReaderChapterOpeningStyle = .outdent
     @AppStorage("reader.pageturn.mac") private var pageTurn: ReaderPageTurn = .paged
     @State private var pendingSelection: ReaderSelection?
     @State private var chapterHighlights: [HighlightPaint] = []
@@ -67,9 +72,8 @@ struct MacReaderScreen: View {
     @State private var isSummaryLoading = false
     @State private var modeGuideText = ""
     @State private var isGuideLoading = false
-    @State private var marginNote: String?
-    @State private var marginNoteSubject: String?
-    @State private var marginNoteSaved = false
+    @State private var selectionInsight: ReaderSelectionInsight?
+    @State private var selectionInsightSaved = false
     @State private var glossEntry: VocabEntry?
     @State private var isSelectionWorking = false
     @State private var thoughtLinks: [ThoughtLink] = []
@@ -188,7 +192,7 @@ struct MacReaderScreen: View {
     private var immersionBlocked: Bool {
         showSettings || showChapterList || showRecap || showHighlights
             || showChapterSelection || isCompanionOpen || isTocOpen
-            || pendingSelection != nil || marginNote != nil || glossEntry != nil
+            || pendingSelection != nil || selectionInsight != nil || glossEntry != nil
     }
 
     private func wakeChrome() {
@@ -295,7 +299,7 @@ struct MacReaderScreen: View {
                                         highlights: chapterHighlights,
                                         inlineMode: inlineNoteKind,
                                         inlineNotes: inlineNotes,
-                                        appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+                                        appearance: readerAppearance,
                                         selectionActive: pendingSelection != nil,
                                         onTap: { pendingSelection = nil },
                                         onChapterBoundary: { direction in
@@ -321,7 +325,7 @@ struct MacReaderScreen: View {
                                         inlineMode: inlineNoteKind,
                                         inlineLayout: readingMode == .bilingual ? .parallel : .stacked,
                                         inlineNotes: inlineNotes,
-                                        appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+                                        appearance: readerAppearance,
                                         speechRange: aloud.currentSentenceRange,
                                         selectionActive: pendingSelection != nil,
                                         onTap: { pendingSelection = nil },
@@ -388,6 +392,11 @@ struct MacReaderScreen: View {
                 lineSpacing: $lineSpacing,
                 theme: $readerTheme,
                 font: $readerFont,
+                contentWidth: $readerContentWidth,
+                firstLineIndent: $readerFirstLineIndent,
+                paragraphSpacing: $readerParagraphSpacing,
+                textAlignment: $readerTextAlignment,
+                chapterOpening: $readerChapterOpening,
                 pageTurn: $pageTurn,
                 bookID: book.id
             )
@@ -422,7 +431,38 @@ struct MacReaderScreen: View {
             }
             .frame(minWidth: 420, minHeight: 460)
         }
-        .onChange(of: currentChapterIndex) { _, _ in
+        .sheet(item: $selectionInsight) { insight in
+            SelectionInsightSheet(insight: insight) {
+                Button("继续追问 ↩") {
+                    selectionInsight = nil
+                    askAboutSelection(insight.subject)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(palette.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .overlay(Capsule().strokeBorder(palette.accent, lineWidth: 1))
+
+                Button(selectionInsightSaved ? "✓ 已存为卡片" : "存为卡片") {
+                    saveSelectionInsightCard()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5))
+                .foregroundStyle(selectionInsightSaved ? palette.accent : palette.ink3)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
+                .disabled(selectionInsightSaved)
+            }
+        }
+        .onChange(of: currentChapterIndex) { _, newIndex in
+            // Load the target chapter's XHTML on demand. Only the current
+            // chapter is kept in memory, so large EPUBs don't bloat the heap.
+            if var book = epubBook, book.chapters.indices.contains(newIndex) {
+                book.loadContent(forChapterAt: newIndex)
+                epubBook = book
+            }
             pendingSelection = nil
             refreshChapterHighlights()
             resetChapterArtifacts()
@@ -591,13 +631,14 @@ struct MacReaderScreen: View {
                 ChapterListView(
                     titles: sectionTitles,
                     unitLabel: "页",
-                    currentIndex: currentChapterIndex
-                ) { index in
-                    currentChapterIndex = index
-                    syncPageProgress(at: index)
-                    showChapterList = false
-                    resetChapterArtifacts()
-                }
+                    currentIndex: currentChapterIndex,
+                    onSelect: { index in
+                        currentChapterIndex = index
+                        syncPageProgress(at: index)
+                        showChapterList = false
+                        resetChapterArtifacts()
+                    }
+                )
                 .frame(minWidth: 380, minHeight: 460)
             }
             .sheet(isPresented: $showSettings) {
@@ -606,6 +647,11 @@ struct MacReaderScreen: View {
                     lineSpacing: $lineSpacing,
                     theme: $readerTheme,
                     font: $readerFont,
+                    contentWidth: $readerContentWidth,
+                    firstLineIndent: $readerFirstLineIndent,
+                    paragraphSpacing: $readerParagraphSpacing,
+                    textAlignment: $readerTextAlignment,
+                    chapterOpening: $readerChapterOpening,
                     pageTurn: $pageTurn,
                     bookID: book.id
                 )
@@ -647,6 +693,18 @@ struct MacReaderScreen: View {
             return "Page \(currentChapterIndex + 1)"
         }
         return sectionTitles[currentChapterIndex]
+    }
+
+    private var readerAppearance: ReaderAppearance {
+        ReaderAppearance(
+            theme: readerTheme,
+            font: readerFont,
+            contentWidth: readerContentWidth,
+            firstLineIndent: readerFirstLineIndent,
+            paragraphSpacing: readerParagraphSpacing,
+            textAlignment: readerTextAlignment,
+            chapterOpening: readerChapterOpening
+        )
     }
 
     private func syncPageProgress(at index: Int) {
@@ -824,43 +882,11 @@ struct MacReaderScreen: View {
         .frame(height: 44)
     }
 
-    /// Floating cards over the reading surface: margin note, vocab gloss,
-    /// thought link, and the selection action popover. Shared by the EPUB
-    /// and PDF readers.
+    /// Floating cards over the reading surface: vocab gloss, thought link,
+    /// and the selection action popover. Explain / translate results now open
+    /// in a sheet so long answers never cover正文.
     private var selectionOverlay: some View {
         VStack(spacing: 12) {
-            if let marginNote {
-                ZhupiCallout(title: "朱批 · 划词解释") {
-                    Text(marginNote)
-                        .font(.system(size: 12.5))
-                        .lineSpacing(5)
-                        .foregroundStyle(palette.ink2)
-                    HStack(spacing: 8) {
-                        Button("继续追问 ↩") {
-                            askAboutSelection(marginNoteSubject ?? marginNote)
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(palette.accent)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .overlay(Capsule().strokeBorder(palette.accent, lineWidth: 1))
-
-                        Button(marginNoteSaved ? "✓ 已存为卡片" : "存为卡片") {
-                            saveMarginNoteCard()
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(marginNoteSaved ? palette.accent : palette.ink3)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
-                        .disabled(marginNoteSaved)
-                    }
-                    .padding(.top, 8)
-                }
-                .padding(.horizontal, 24)
-            }
 
             if let glossEntry {
                 glossCard(glossEntry)
@@ -1185,26 +1211,22 @@ struct MacReaderScreen: View {
             do {
                 let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
                 let service = resolution.service
-                let passage = GroundedPassage(id: 0, text: selection.text)
                 let source = chapterSourceLabel
 
                 switch action {
-                case .explain:
+                case .explain, .translate:
+                    let kind: SelectionInsightKind = action == .explain ? .explain : .translate
                     let answer = try await service.answer(
-                        question: "Explain this passage to a thoughtful reader. Reply in Chinese with etymology or nuance when helpful.",
-                        groundedIn: [passage]
+                        question: kind.question(for: selection),
+                        groundedIn: [GroundedPassage(id: 0, text: kind.groundedText(for: selection))]
                     )
-                    marginNote = answer.text
-                    marginNoteSubject = selection.text
-                    marginNoteSaved = false
-                case .translate:
-                    let answer = try await service.answer(
-                        question: "Translate this passage into natural Chinese, preserving literary tone.",
-                        groundedIn: [passage]
+                    selectionInsight = .make(
+                        kind: kind,
+                        subject: selection.text,
+                        body: answer.text
                     )
-                    marginNote = answer.text
-                    marginNoteSubject = selection.text
-                    marginNoteSaved = false
+                    selectionInsightSaved = false
+                    pendingSelection = nil
                 case .ask:
                     askAboutSelection(selection.text)
                 case .vocab:
@@ -1220,14 +1242,24 @@ struct MacReaderScreen: View {
                     glossEntry = entry
                 }
             } catch {
-                marginNote = "出错了:\(error.localizedDescription)"
+                if action == .explain || action == .translate {
+                    let kind: SelectionInsightKind = action == .translate ? .translate : .explain
+                    selectionInsight = .make(
+                        kind: kind,
+                        subject: selection.text,
+                        body: "出错了：\(error.localizedDescription)"
+                    )
+                    selectionInsightSaved = false
+                }
+                pendingSelection = nil
             }
         }
     }
 
     private func askAboutSelection(_ text: String) {
         withAnimation { isCompanionOpen = true }
-        companion.draft = "关于「\(text.prefix(60))」"
+        companion.draft = CompanionModel.followUpQuestion(about: text)
+        companion.draftFocusText = text
         companion.send(
             book: book,
             position: currentReadingPosition,
@@ -1251,9 +1283,8 @@ struct MacReaderScreen: View {
         thoughtLinks = []
         expandedThoughtLinkIDs.removeAll()
         savedThoughtLinkIDs.removeAll()
-        marginNote = nil
-        marginNoteSubject = nil
-        marginNoteSaved = false
+        selectionInsight = nil
+        selectionInsightSaved = false
         glossEntry = nil
         pendingSelection = nil
         showChapterSelection = false
@@ -1599,19 +1630,20 @@ struct MacReaderScreen: View {
     // MARK: Saved cards
 
     /// 朱批边注 → 问答卡 in the notes screen.
-    private func saveMarginNoteCard() {
-        guard let marginNote, !marginNoteSaved else { return }
-        let subject = (marginNoteSubject ?? "这一段").prefix(80)
+    private func saveSelectionInsightCard() {
+        guard let selectionInsight, !selectionInsightSaved else { return }
+        let subject = selectionInsight.subject.prefix(80)
         let card = StudyCardEntry(
-            question: "朱批:\(subject)",
-            answer: marginNote,
+            question: "\(selectionInsight.title):\(subject)",
+            answer: selectionInsight.body,
             source: chapterSourceLabel,
             kind: .qa
         )
+        card.setSourcePosition(currentReadingPosition)
         card.book = book
         modelContext.insert(card)
         try? modelContext.save()
-        marginNoteSaved = true
+        selectionInsightSaved = true
     }
 
     /// 思维链接 → 链接卡 in the notes screen.
@@ -1623,6 +1655,7 @@ struct MacReaderScreen: View {
             source: "\(link.currentSource) ⟷ \(link.relatedSource)",
             kind: .link
         )
+        card.setSourcePosition(currentReadingPosition)
         card.book = book
         modelContext.insert(card)
         try? modelContext.save()
@@ -1654,7 +1687,7 @@ struct MacReaderScreen: View {
 
     private func applySelection(_ selection: ReaderSelection?) {
         pendingSelection = selection
-        marginNote = nil
+        selectionInsight = nil
         glossEntry = nil
         if let selection {
             Task { await detectThoughtLink(for: selection.text) }
@@ -1815,13 +1848,22 @@ struct MacReaderScreen: View {
 
                 switch book.format {
                 case .epub:
-                    let parsed = try EPUBParser().parseBook(
+                    // Open the book without pulling every spine item into
+                    // memory: parse metadata and the chapter list, then load
+                    // only the current chapter's XHTML before leaving the
+                    // loading screen.
+                    var parsed = try EPUBParser().parseBook(
                         at: fileURL,
-                        unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
+                        unzipDirectory: fileStore.unzipDirectory(forBookID: book.id),
+                        loadContent: false
                     )
                     guard !parsed.chapters.isEmpty else {
                         throw EPUBParser.ParseError.parsingFailed("No readable chapters found.")
                     }
+                    if currentChapterIndex >= parsed.chapters.count {
+                        currentChapterIndex = 0
+                    }
+                    parsed.loadContent(forChapterAt: currentChapterIndex)
                     epubBook = parsed
                     sectionCount = parsed.chapters.count
                     sectionTitles = parsed.chapters.map(\.title)
@@ -1835,9 +1877,6 @@ struct MacReaderScreen: View {
                     pdfDocumentURL = fileURL
                 }
 
-                if currentChapterIndex >= sectionCount {
-                    currentChapterIndex = 0
-                }
                 if book.format == .pdf {
                     syncPageProgress(at: currentChapterIndex)
                 }

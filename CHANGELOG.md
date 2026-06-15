@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
-- Empty Cloud / 自建 server 的前台自动同步不再总是回推整库 full snapshot：客户端现在持久化本地 `SyncMutationJournal` baseline，pull 后只重放仍未推送的本地 upsert / tombstone，并在失败时排队自动重试；设置页也会直接显示待同步变化数量与下次重试时间。
-
-- Empty Cloud / 自建 server 现在带上了 Passkey 账号壳层：客户端可探测 `empty-passkey-auth-v1`，执行创建 / 登录 / 刷新 / 退出账号，会话 token 只留在 Keychain，设置页也新增了更接近日常心智的账号入口。
-- 自动同步现在会把“后台唤醒壳层”也接上：iOS 通过 `BGAppRefreshTask`、macOS 通过 `NSBackgroundActivityScheduler` 继续申请一次系统调度；设置页会直接展示后台计划时间，便于你判断“放后台后还会不会再试一次”。
-- 双向同步现在带上基础冲突策略：同一条高亮 / 书签 / 记忆如果本机和云端都改过，可在设置里选“本机优先”或“云端优先”，最近一次冲突按哪种策略处理也会直接显示出来。
+- 存储再收窄为纯本机：移除 iCloud/CloudKit 状态探测、`SyncSettings`、`SyncUsageSummary` 和同步模式切换；`AppSession` 只创建本机 SwiftData container。
+- `SyncSettingsView` 替换为 `BackupSettingsView`：展示本机 reader data / 派生数据边界，并提供 `.empty-notes` 导出 / 导入入口。
+- Added `.empty-notes` local reader-notes export/import: `ReaderNotesBackupStore` writes Book metadata, highlights, reading sessions, vocab, bookmarks, study cards, and ReaderMemory as a single JSON package, then imports by stable ids without deleting local records.
+- macOS sandbox selected-file permission is now read-write so the local save panel can write backup packages.
+- AI 伴读现在更偏向本地阅读现场：选区 / 追问不再截成 60 字小前缀，agent transcript 会带上当前书、当前章节和最近已读上下文，`recall_reader_memory` / `search_highlights` 先返回本书命中，再补跨书回声。
+- iOS 阅读器补上手机端导航闭环：顶部新增搜索与书签入口，目录 sheet 合并目录 / 书签 / 全文搜索，卡片页的高亮和带来源的学习卡可以直接跳回原文位置。
+- Paper Reading v2：分页模式顶部 chrome 进一步弱化（透明背景、单菜单入口），章首新增「章首饰线」小章题 + 分隔饰线与「首字下沉」效果，书库 / 阅读 / 卡片三端统一为暖纸色卡片节奏。
 ### Fixed
 
 - EPUB images in the paginated reader sometimes rendered blank: WebKit
@@ -77,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has already advanced within the chapter; it now checks `fullyReadText`
   instead of requiring `chapterIndex > 0`.
 
+- 划词“解释 / 翻译”不再把长答案压在正文上：结果改为独立 sheet 展示，阅读面不再被 overlay 盖住；同时把选区前后文一起送进 AI。解释继续吃上下文，单词/短语翻译则只翻译被选中的词本身，不再把周围句子一并翻过去。
+
+- AI 伴读回复现在会更明确地带上当前阅读语境：agent / fallback 回复都附带当前章节来源；如果问题是从划词“继续追问”进入，还会把那句原文作为「围绕…」提示显式展示出来。
+- `search_highlights` / `recall_reader_memory` 的工具观察现在更像证据清单：按条编号，明确区分本书 / 跨书命中，并优先压低跨书噪音；伴读消息气泡里也会显式显示当前追问原文与《书名》·章节来源。
+- 伴读证据区现在按 **本书证据 / 跨书回声** 分组展示，命中词在证据摘录里会被强调；iOS 半屏里长证据展开后也会落进独立可滚动区，避免整条对话被长摘录撑乱。
+- 伴读回答现在把命中的已读段落收紧到更具体的来源：正文上方会显示 `引文：「…」`，来源 chip 也会尽量落到 `《书名》 · 章节 · ¶段落`；高亮搜索默认留在当前书，ReaderMemory 的跨书回声只有在本书证据不足时才更克制地露出来。
 ### Added
 
 - ReaderMemory now participates in live thought links: `ThoughtLinkFinder`

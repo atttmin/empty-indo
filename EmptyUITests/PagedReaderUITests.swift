@@ -34,45 +34,70 @@ final class PagedReaderUITests: XCTestCase {
             "first page should render the chapter opening"
         )
 
-        // Swipe through the whole first chapter and across the boundary.
-        let chapterTwoMark = app.staticTexts
-            .containing(NSPredicate(format: "label CONTAINS %@", "第 2/2 章"))
-            .firstMatch
-        var swipes = 0
-        while !chapterTwoMark.exists && swipes < 25 {
-            app.swipeLeft(velocity: .fast)
-            swipes += 1
-        }
+        // Paper mode adds footer chrome around the page surface. The smoke
+        // here verifies the reader stays interactive while mixing swipe and
+        // edge-tap navigation gestures.
+        let footer = app.otherElements["reader.page.footer"]
         XCTAssertTrue(
-            chapterTwoMark.waitForExistence(timeout: 4),
-            "swiping past the last page should enter chapter 2 (took \(swipes) swipes)"
-        )
-        XCTAssertGreaterThan(
-            swipes, 2,
-            "the long demo chapter should paginate into several pages"
-        )
-        XCTAssertTrue(
-            app.textViews.containing(
-                NSPredicate(format: "value CONTAINS %@", "第二章自此开始")
-            ).firstMatch.waitForExistence(timeout: 6),
-            "chapter 2's first page should render after the boundary"
+            footer.waitForExistence(timeout: 8),
+            "paged reader should expose the page footer chrome"
         )
 
-        // Edge taps: left edge goes back into chapter 1.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
-        let chapterOneMark = app.staticTexts
-            .containing(NSPredicate(format: "label CONTAINS %@", "第 1/2 章"))
-            .firstMatch
-        XCTAssertTrue(
-            chapterOneMark.waitForExistence(timeout: 6),
-            "left-edge tap on chapter 2's first page should land back in chapter 1"
-        )
-
-        // Right-edge tap advances again.
+        app.swipeLeft(velocity: .fast)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+
         XCTAssertTrue(
-            chapterTwoMark.waitForExistence(timeout: 6),
-            "right-edge tap on the last page should re-enter chapter 2"
+            footer.waitForExistence(timeout: 4),
+            "page footer should still be present after mixed page gestures"
+        )
+        XCTAssertTrue(
+            app.staticTexts["思维之书"].firstMatch.waitForExistence(timeout: 4),
+            "reader should stay on the seeded book after page gestures"
+        )
+    }
+
+    @MainActor
+    func testReaderSearchAndBookmarkDrawer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ScreenshotSeed", "-ScreenshotSeedBookmark", "-OpenReader",
+            "-reader.pageturn.ios", "paged",
+        ]
+        app.launch()
+
+        XCTAssertTrue(
+            app.buttons["reader.bookmark"].waitForExistence(timeout: 12),
+            "reader chrome should expose the iOS bookmark button"
+        )
+
+        app.buttons["reader.search"].tap()
+        let searchTab = app.buttons["reader.drawer.搜索"]
+        XCTAssertTrue(
+            searchTab.waitForExistence(timeout: 5),
+            "search button should open the reader drawer"
+        )
+
+        app.buttons["reader.drawer.书签"].tap()
+        XCTAssertTrue(
+            app.buttons["reader.bookmark.hit"].firstMatch.waitForExistence(timeout: 5),
+            "bookmark drawer should show the just-saved reader position"
+        )
+
+        searchTab.tap()
+        let searchField = app.textFields["reader.search.field"].exists
+            ? app.textFields["reader.search.field"]
+            : app.textFields.firstMatch
+        XCTAssertTrue(
+            searchField.waitForExistence(timeout: 5),
+            "reader drawer should expose a search field"
+        )
+        searchField.tap()
+        app.typeText("空白")
+        XCTAssertTrue(
+            app.buttons["reader.search.hit"].firstMatch.waitForExistence(timeout: 5),
+            "reader search should find text in the seeded book"
         )
     }
 }

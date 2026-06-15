@@ -17,7 +17,7 @@ nonisolated enum VocabReviewGrade: Sendable {
 }
 
 /// A word the reader looked up, scheduled for spaced repetition on the
-/// Ebbinghaus ladder (1 → 2 → 4 → 7 → 15 → 30 days). Synced store —
+/// Ebbinghaus ladder (1 → 2 → 4 → 7 → 15 → 30 days). Reader data store —
 /// vocabulary is the reader's own data.
 @Model
 final class VocabEntry {

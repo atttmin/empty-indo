@@ -49,8 +49,12 @@ private nonisolated struct NativeTextRenderModel: Equatable {
     var text: String
     var fontSize: Double
     var lineSpacing: CGFloat
+    var paragraphSpacing: CGFloat
+    var headIndent: CGFloat
+    var firstLineHeadIndent: CGFloat
     var weight: NativeTextWeight
     var tone: NativeTextTone
+    var justified = false
     var isDark: Bool
     var monospaced = false
     var fontFamily: String? = nil
@@ -58,16 +62,24 @@ private nonisolated struct NativeTextRenderModel: Equatable {
     var inkPrimaryHex: UInt32? = nil
     var inkSecondaryHex: UInt32? = nil
     var highlightSegments: [NativeHighlightSegment]
+    /// Number of leading characters rendered at `dropCapFontSize` for a
+    /// book-style drop-cap opening paragraph.
+    var dropCapCount: Int = 0
+    var dropCapFontSize: Double? = nil
 }
 
 struct NativeSelectableTextBlockView: View {
     let text: String
     let fontSize: Double
     let lineSpacing: CGFloat
+    var paragraphSpacing: CGFloat = 0
+    var headIndent: CGFloat = 0
+    var firstLineHeadIndent: CGFloat = 0
     let weight: NativeTextWeight
     let tone: NativeTextTone
     let highlightRanges: [NativeHighlightRange]
     let isDark: Bool
+    var justified = false
     var monospaced: Bool = false
     var fontFamily: String? = nil
     var useSerifDesign: Bool = true
@@ -76,6 +88,9 @@ struct NativeSelectableTextBlockView: View {
     var selectedRange: Range<Int>? = nil
     var scrollTargetOffset: Int? = nil
     var clearSelection: Bool = false
+    /// Book-style drop cap: render the first N characters at a larger size.
+    var dropCapCount: Int = 0
+    var dropCapFontSize: Double? = nil
     var onSelectionChange: (Range<Int>?) -> Void = { _ in }
 
     var body: some View {
@@ -84,8 +99,12 @@ struct NativeSelectableTextBlockView: View {
                 text: text,
                 fontSize: fontSize,
                 lineSpacing: lineSpacing,
+                paragraphSpacing: paragraphSpacing,
+                headIndent: headIndent,
+                firstLineHeadIndent: firstLineHeadIndent,
                 weight: weight,
                 tone: tone,
+                justified: justified,
                 isDark: isDark,
                 monospaced: monospaced,
                 fontFamily: fontFamily,
@@ -98,7 +117,9 @@ struct NativeSelectableTextBlockView: View {
                         endUTF16: $0.range.upperBound,
                         colorHex: $0.colorHex
                     )
-                }
+                },
+                dropCapCount: dropCapCount,
+                dropCapFontSize: dropCapFontSize
             ),
             selectedRange: selectedRange.map {
                 NativeTextSelectionRequest(startUTF16: $0.lowerBound, endUTF16: $0.upperBound)
@@ -113,8 +134,10 @@ struct NativeSelectableTextBlockView: View {
 private func makeAttributedText(from model: NativeTextRenderModel) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = model.lineSpacing
-    paragraph.paragraphSpacing = 0
-
+    paragraph.paragraphSpacing = model.paragraphSpacing
+    paragraph.headIndent = model.headIndent
+    paragraph.firstLineHeadIndent = model.firstLineHeadIndent
+    paragraph.alignment = model.justified ? .justified : .natural
     let attributes: [NSAttributedString.Key: Any] = [
         .font: nativeFont(
             size: model.fontSize,
@@ -128,6 +151,20 @@ private func makeAttributedText(from model: NativeTextRenderModel) -> NSAttribut
     ]
     let attributed = NSMutableAttributedString(string: model.text, attributes: attributes)
     let textLength = model.text.utf16.count
+
+    if model.dropCapCount > 0, let dropCapSize = model.dropCapFontSize, dropCapSize > model.fontSize {
+        let capLength = min(model.dropCapCount, textLength)
+        let capRange = NSRange(location: 0, length: capLength)
+        let capFont = nativeFont(
+            size: dropCapSize,
+            weight: .bold,
+            monospaced: model.monospaced,
+            family: model.fontFamily,
+            useSerifDesign: model.useSerifDesign
+        )
+        attributed.addAttribute(.font, value: capFont, range: capRange)
+    }
+
     for segment in model.highlightSegments {
         let clampedStart = max(0, min(segment.startUTF16, textLength))
         let clampedEnd = max(clampedStart, min(segment.endUTF16, textLength))

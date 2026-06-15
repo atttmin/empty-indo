@@ -37,6 +37,52 @@ nonisolated struct CompanionAction: Identifiable, Equatable, Sendable {
     }
 }
 
+nonisolated enum CompanionEvidenceKind: String, Equatable, Sendable {
+    case passage
+    case highlights
+    case memory
+
+    var label: String {
+        switch self {
+        case .passage:
+            return "已读原文"
+        case .highlights:
+            return "高亮"
+        case .memory:
+            return "记忆"
+        }
+    }
+}
+
+nonisolated enum CompanionEvidenceScope: String, Equatable, Sendable {
+    case currentBook
+    case crossBook
+}
+
+nonisolated struct CompanionEvidenceBlock: Identifiable, Equatable, Sendable {
+    let id: UUID
+    var kind: CompanionEvidenceKind
+    var title: String
+    var body: String
+    var scope: CompanionEvidenceScope
+    var emphasisTerms: [String]
+
+    init(
+        kind: CompanionEvidenceKind,
+        title: String,
+        body: String,
+        scope: CompanionEvidenceScope = .currentBook,
+        emphasisTerms: [String] = []
+    ) {
+        self.id = UUID()
+        self.kind = kind
+        self.title = title
+        self.body = body
+        self.scope = scope
+        self.emphasisTerms = emphasisTerms
+    }
+}
+
 /// What one tool invocation produced: text the model reasons over, plus
 /// any write proposal for the reader.
 nonisolated struct ReadingToolResult {
@@ -46,6 +92,8 @@ nonisolated struct ReadingToolResult {
     var traceLabel: String
     /// Confirm-gated write, when the tool proposes one.
     var proposedAction: CompanionAction?
+    /// Evidence blocks worth surfacing back to the reader UI.
+    var evidenceBlocks: [CompanionEvidenceBlock] = []
     /// True when reader memory contributed real entries — the reply
     /// trace must disclose it (⚲ 引用了记忆).
     var citedMemory = false
@@ -156,6 +204,7 @@ struct ReadingToolbox {
         guard !query.isEmpty else {
             return ReadingToolResult(observation: "搜索词为空。", traceLabel: "查已读")
         }
+        _ = try BookIndexer(modelContext: modelContext).ensureChunks(for: book)
         let chunks = try ChunkRetriever(modelContext: modelContext).retrieve(
             question: query,
             bookID: book.id,
@@ -167,15 +216,22 @@ struct ReadingToolbox {
                 traceLabel: "查已读「\(query.prefix(12))」"
             )
         }
-        let body = chunks.prefix(3)
-            .map { chunk in
-                let title = chunk.chapter?.title ?? "第 \(chunk.chapterIndex + 1) 章"
-                return "[\(title)] \(String(chunk.text.prefix(600)))"
-            }
-            .joined(separator: "\n")
+        let emphasisTerms = queryTerms(for: query)
+        let evidenceBlocks = chunks.prefix(3).map { chunk in
+            CompanionEvidenceBlock(
+                kind: .passage,
+                title: passageSourceLabel(for: chunk),
+                body: String(chunk.text.prefix(320)),
+                emphasisTerms: emphasisTerms
+            )
+        }
+        let body = evidenceBlocks.enumerated().map { index, block in
+            "\(index + 1). \(block.title)\n   原文: \(block.body)"
+        }.joined(separator: "\n")
         return ReadingToolResult(
-            observation: body,
-            traceLabel: "查已读「\(query.prefix(12))」"
+            observation: "命中段落：\n\(body)",
+            traceLabel: "查已读「\(query.prefix(12))」",
+            evidenceBlocks: evidenceBlocks
         )
     }
 
@@ -193,6 +249,7 @@ struct ReadingToolbox {
         guard !text.isEmpty else {
             return ReadingToolResult(observation: "没有要解释的内容。", traceLabel: "解释")
         }
+        _ = try BookIndexer(modelContext: modelContext).ensureChunks(for: book)
         let chunks = (try? ChunkRetriever(modelContext: modelContext).retrieve(
             question: text,
             bookID: book.id,
@@ -244,15 +301,42 @@ struct ReadingToolbox {
         guard !query.isEmpty else {
             return ReadingToolResult(observation: "没有给出要回忆的主题。", traceLabel: "忆")
         }
-        // Sync first so fresh highlights/cards are recallable immediately.
         let memory = ReaderMemory(modelContext: modelContext)
-        try? memory.syncFromReaderData()
-        let hits = try memory.recall(query: query, limit: 5)
-        let observation = try memory.recallObservation(query: query)
+        _ = try? memory.syncFromReaderData()
+        let localHits = try memory.recall(query: query, bookID: book.id, limit: 3)
+        let globalHits = try memory.recall(query: query, limit: 5)
+        let mergedHits = mergeMemoryHits(query: query, localHits: localHits, globalHits: globalHits, limit: 5)
+        guard !mergedHits.isEmpty else {
+            return ReadingToolResult(
+                observation: "记忆里没有与「\(query.prefix(30))」相关的条目。",
+                traceLabel: "忆「\(query.prefix(10))」"
+            )
+        }
+        let localIDs = Set(localHits.map(\.itemID))
+        let emphasisTerms = queryTerms(for: query)
+        let evidenceBlocks = mergedHits.map { hit in
+            let isCurrentBook = localIDs.contains(hit.itemID)
+            let source = hit.sourceLabel ?? (isCurrentBook ? book.title : "其他书 / 未标注来源")
+            let snippet = hit.body
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return CompanionEvidenceBlock(
+                kind: .memory,
+                title: source,
+                body: String(snippet.prefix(180)),
+                scope: isCurrentBook ? .currentBook : .crossBook,
+                emphasisTerms: emphasisTerms
+            )
+        }
+        let lines = evidenceBlocks.enumerated().map { index, block in
+            let scope = block.scope == .currentBook ? "本书" : "跨书"
+            return "\(index + 1). [\(scope) · \(block.kind.label)] \(block.title)\n   记忆: \(block.body)"
+        }.joined(separator: "\n")
         return ReadingToolResult(
-            observation: observation,
+            observation: "相关记忆：\n\(lines)",
             traceLabel: "忆「\(query.prefix(10))」",
-            citedMemory: !hits.isEmpty
+            evidenceBlocks: evidenceBlocks,
+            citedMemory: true
         )
     }
 
@@ -265,24 +349,54 @@ struct ReadingToolbox {
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
         )
-        let hits = highlights.filter {
-            $0.textSnapshot.localizedCaseInsensitiveContains(keyword)
-                || ($0.note?.localizedCaseInsensitiveContains(keyword) ?? false)
-        }.prefix(5)
+        let currentBookHits = highlights.filter { $0.book?.id == book.id }
+            .filter {
+                $0.textSnapshot.localizedCaseInsensitiveContains(keyword)
+                    || ($0.note?.localizedCaseInsensitiveContains(keyword) ?? false)
+            }
+        let otherBookHits = highlights.filter { $0.book?.id != book.id }
+            .filter {
+                $0.textSnapshot.localizedCaseInsensitiveContains(keyword)
+                    || ($0.note?.localizedCaseInsensitiveContains(keyword) ?? false)
+            }
+        let hits: [Highlight]
+        if !currentBookHits.isEmpty {
+            hits = Array(currentBookHits.prefix(4))
+        } else {
+            hits = Array(otherBookHits.prefix(2))
+        }
         guard !hits.isEmpty else {
             return ReadingToolResult(
                 observation: "高亮里没有包含「\(keyword)」的内容。",
                 traceLabel: "搜高亮「\(keyword.prefix(10))」"
             )
         }
-        let body = hits.map { highlight -> String in
-            let source = highlight.book?.title ?? "未知书"
-            let note = highlight.note.map { " 批注:\($0.prefix(120))" } ?? ""
-            return "[\(source) · 第 \(highlight.chapterIndex + 1) 章]「\(highlight.textSnapshot.prefix(160))」\(note)"
+        let emphasisTerms = queryTerms(for: keyword)
+        let evidenceBlocks = hits.map { highlight in
+            let isCurrentBook = highlight.book?.id == book.id
+            let source = isCurrentBook
+                ? "第 \(highlight.chapterIndex + 1) 章"
+                : "《\(highlight.book?.title ?? "未知书")》 · 第 \(highlight.chapterIndex + 1) 章"
+            let note = highlight.note?
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let noteLine = note.map { "\n批注: \($0.prefix(110))" } ?? ""
+            return CompanionEvidenceBlock(
+                kind: .highlights,
+                title: source,
+                body: "原文: 「\(highlight.textSnapshot.prefix(140))」\(noteLine)",
+                scope: isCurrentBook ? .currentBook : .crossBook,
+                emphasisTerms: emphasisTerms
+            )
+        }
+        let body = evidenceBlocks.enumerated().map { index, block in
+            let scope = block.scope == .currentBook ? "本书" : "跨书"
+            return "\(index + 1). [\(scope) · \(block.kind.label)] \(block.title)\n   \(block.body)"
         }.joined(separator: "\n")
         return ReadingToolResult(
-            observation: body,
-            traceLabel: "搜高亮「\(keyword.prefix(10))」"
+            observation: "命中高亮：\n\(body)",
+            traceLabel: "搜高亮「\(keyword.prefix(10))」",
+            evidenceBlocks: evidenceBlocks
         )
     }
 
@@ -311,12 +425,14 @@ struct ReadingToolbox {
         guard !word.isEmpty else {
             return ReadingToolResult(observation: "没有给出要加入的词。", traceLabel: "建议生词")
         }
+        let sentence = (try? contextualSentence(for: word)) ?? ""
         let action = CompanionAction(
             title: "加入生词本「\(word)」",
-            kind: .addVocab(word: word, sentence: "")
+            kind: .addVocab(word: word, sentence: sentence)
         )
+        let contextLine = sentence.isEmpty ? "" : "\n上下文:\(sentence)"
         return ReadingToolResult(
-            observation: "已把「\(word)」提交给读者确认加入生词本。不要重复提交同一个词。",
+            observation: "已把「\(word)」提交给读者确认加入生词本。不要重复提交同一个词。\(contextLine)",
             traceLabel: "建议生词(待确认)",
             proposedAction: action
         )
@@ -361,6 +477,84 @@ struct ReadingToolbox {
         )
     }
 
+    private func recentReadText(maxCharacters: Int) throws -> String? {
+        try Chapter.recentContextExcerpt(
+            forBookID: book.id,
+            before: position,
+            maxCharacters: maxCharacters,
+            in: modelContext
+        )
+    }
+
+    private func contextualSentence(for word: String) throws -> String? {
+        guard !word.isEmpty,
+              let excerpt = try recentReadText(maxCharacters: 1_200),
+              let range = excerpt.range(of: word, options: [.caseInsensitive, .diacriticInsensitive])
+        else { return nil }
+        let utf16 = Array(excerpt.utf16)
+        let lower = max(0, range.lowerBound.utf16Offset(in: excerpt) - 70)
+        let upper = min(utf16.count, range.upperBound.utf16Offset(in: excerpt) + 90)
+        let snippet = String(decoding: utf16[lower..<upper], as: UTF16.self)
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return snippet.isEmpty ? nil : snippet
+    }
+
+    private func mergeMemoryHits(
+        query: String,
+        localHits: [MemoryRecall],
+        globalHits: [MemoryRecall],
+        limit: Int
+    ) -> [MemoryRecall] {
+        let nonLocalGlobals = globalHits.filter { global in
+            !localHits.contains(where: { $0.itemID == global.itemID })
+        }
+        let thematicQuery = queryTerms(for: query).count >= 2
+        if localHits.count >= 2 {
+            return Array(localHits.prefix(limit))
+        }
+        if let topLocal = localHits.first {
+            guard thematicQuery else { return Array(localHits.prefix(limit)) }
+            let qualifiedEchoes = nonLocalGlobals.filter {
+                $0.score >= max(0.25, topLocal.score * 0.45)
+            }
+            return Array((localHits + qualifiedEchoes.prefix(1)).prefix(limit))
+        }
+        let qualifiedEchoes = nonLocalGlobals.filter {
+            $0.score >= (thematicQuery ? 0.58 : 0.64)
+        }
+        return Array(qualifiedEchoes.prefix(min(limit, thematicQuery ? 2 : 1)))
+    }
+
+    private func passageSourceLabel(for chunk: Chunk) -> String {
+        let title = if let chapterTitle = chunk.chapter?.title, !chapterTitle.isEmpty {
+            chapterTitle
+        } else {
+            "第 \(chunk.chapterIndex + 1) 章"
+        }
+        return "《\(book.title)》 · \(title) · ¶\(chunk.ordinal + 1)"
+    }
+    private func queryTerms(for query: String) -> [String] {
+        let tokens = query
+            .split {
+                $0.isWhitespace
+                    || "，。、！？；：,.!?;:()[]{}<>“”‘’'\"/\\|".contains($0)
+            }
+            .map(String.init)
+        let candidates = tokens.filter { $0.count >= 2 }
+        let seeds = candidates.isEmpty
+            ? [query.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+            : candidates
+        var seen = Set<String>()
+        var unique = [String]()
+        for term in seeds {
+            let normalized = term.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            guard seen.insert(normalized).inserted else { continue }
+            unique.append(term)
+        }
+        return unique
+    }
+
     // MARK: Confirmed writes
 
     /// Executes a reader-confirmed action. Returns a short outcome line
@@ -382,6 +576,7 @@ struct ReadingToolbox {
                     source: book.title,
                     kind: .review
                 )
+                entry.setSourcePosition(position)
                 entry.book = book
                 modelContext.insert(entry)
             }

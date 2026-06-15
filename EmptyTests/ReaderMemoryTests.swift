@@ -126,8 +126,7 @@ struct ReaderMemoryTests {
 
         let hit = try await toolbox.run("recall_reader_memory", argument: "减法")
         #expect(hit.citedMemory)
-        #expect(hit.observation.contains("高亮批注"))
-
+        #expect(hit.observation.contains("[本书 · 记忆]"))
         // Cross-language query: no lexical overlap and a different
         // embedding model → deterministically no recall.
         let miss = try await toolbox.run("recall_reader_memory", argument: "quantum entanglement")
@@ -135,6 +134,129 @@ struct ReaderMemoryTests {
 
         _ = container
     }
+    @Test func recallReaderMemoryStaysInCurrentBookWhenLocalMemoryExists() async throws {
+        let (container, book) = try makeFixture()
+        let context = container.mainContext
+        let current = try HighlightStore(modelContext: context).createHighlight(
+            book: book, chapterIndex: 0, selection: "做减法"
+        )
+        try HighlightStore(modelContext: context).updateNote(current, note: "本书里的减法主题")
+
+        let otherBook = Book(title: "Meditations", format: .epub)
+        context.insert(otherBook)
+        context.insert(Chapter(bookID: otherBook.id, index: 0, text: "Stoic subtraction keeps attention calm."))
+        try context.save()
+        let other = try HighlightStore(modelContext: context).createHighlight(
+            book: otherBook, chapterIndex: 0, selection: "subtraction"
+        )
+        try HighlightStore(modelContext: context).updateNote(other, note: "他书里的减法主题")
+
+        let toolbox = ReadingToolbox(
+            book: book,
+            position: ReadingPosition(chapterIndex: 1, utf16Offset: 0),
+            modelContext: context,
+            service: NullAIService()
+        )
+
+        let result = try await toolbox.run("recall_reader_memory", argument: "减法 主题")
+
+        #expect(result.citedMemory)
+        #expect(result.observation.contains("1. [本书"))
+        #expect(!result.observation.contains("2. [跨书"))
+        #expect(result.evidenceBlocks.allSatisfy { $0.scope == .currentBook })
+    }
+
+    @Test func recallReaderMemoryFormatsSourceAndSnippetLines() async throws {
+        let (container, book) = try makeFixture()
+        let context = container.mainContext
+        let highlight = try HighlightStore(modelContext: context).createHighlight(
+            book: book, chapterIndex: 0, selection: "做减法"
+        )
+        try HighlightStore(modelContext: context).updateNote(highlight, note: "减法是为了让重点站出来。")
+
+        let toolbox = ReadingToolbox(
+            book: book,
+            position: ReadingPosition(chapterIndex: 1, utf16Offset: 0),
+            modelContext: context,
+            service: NullAIService()
+        )
+
+        let result = try await toolbox.run("recall_reader_memory", argument: "重点")
+
+        #expect(result.observation.contains("相关记忆："))
+        #expect(result.observation.contains("1. [本书"))
+        #expect(result.observation.contains("记忆:"))
+    }
+
+    @Test func searchHighlightsSuppressesCrossBookNoiseWhenCurrentBookHasEnoughHits() async throws {
+        let (container, book) = try makeFixture()
+        let context = container.mainContext
+        let first = try HighlightStore(modelContext: context).createHighlight(
+            book: book, chapterIndex: 0, selection: "做减法"
+        )
+        try HighlightStore(modelContext: context).updateNote(first, note: "当前书第一条重点")
+        let second = try HighlightStore(modelContext: context).createHighlight(
+            book: book, chapterIndex: 0, selection: "保留本质"
+        )
+        try HighlightStore(modelContext: context).updateNote(second, note: "当前书第二条重点")
+
+        let otherBook = Book(title: "Meditations", format: .epub)
+        context.insert(otherBook)
+        context.insert(Chapter(bookID: otherBook.id, index: 0, text: "Another note about focus."))
+        try context.save()
+        let other = try HighlightStore(modelContext: context).createHighlight(
+            book: otherBook, chapterIndex: 0, selection: "focus"
+        )
+        try HighlightStore(modelContext: context).updateNote(other, note: "跨书重点")
+
+        let toolbox = ReadingToolbox(
+            book: book,
+            position: ReadingPosition(chapterIndex: 1, utf16Offset: 0),
+            modelContext: context,
+            service: NullAIService()
+        )
+
+        let result = try await toolbox.run("search_highlights", argument: "重点")
+
+        #expect(result.observation.contains("命中高亮："))
+        #expect(result.observation.contains("1. [本书"))
+        #expect(result.observation.contains("2. [本书"))
+        #expect(!result.observation.contains("Meditations"))
+        #expect(result.evidenceBlocks.allSatisfy { $0.scope == .currentBook })
+    }
+
+
+    @Test func searchHighlightsStaysInCurrentBookWhenCurrentHitsExist() async throws {
+        let (container, book) = try makeFixture()
+        let context = container.mainContext
+        let current = try HighlightStore(modelContext: context).createHighlight(
+            book: book, chapterIndex: 0, selection: "做减法"
+        )
+        try HighlightStore(modelContext: context).updateNote(current, note: "现在这本书的重点")
+
+        let otherBook = Book(title: "Meditations", format: .epub)
+        context.insert(otherBook)
+        context.insert(Chapter(bookID: otherBook.id, index: 0, text: "Another chapter about subtraction and calm."))
+        try context.save()
+        let other = try HighlightStore(modelContext: context).createHighlight(
+            book: otherBook, chapterIndex: 0, selection: "subtraction"
+        )
+        try HighlightStore(modelContext: context).updateNote(other, note: "别的书也提到重点")
+
+        let toolbox = ReadingToolbox(
+            book: book,
+            position: ReadingPosition(chapterIndex: 1, utf16Offset: 0),
+            modelContext: context,
+            service: NullAIService()
+        )
+
+        let result = try await toolbox.run("search_highlights", argument: "重点")
+
+        #expect(result.observation.contains("1. [本书"))
+        #expect(!result.observation.contains("《Meditations》"))
+        #expect(result.evidenceBlocks.allSatisfy { $0.scope == .currentBook })
+    }
+
 
     @Test func memoryIndexerPersistsEmbeddingsForConfirmedItems() throws {
         let (container, _) = try makeFixture()

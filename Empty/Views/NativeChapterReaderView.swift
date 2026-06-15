@@ -42,6 +42,13 @@ struct NativeChapterReaderView: View {
     private let blockSpans: [String: NativeTextBlockSpan]
     private let paragraphByID: [String: ReaderParagraph]
     private let orderedTextSpans: [NativeTextBlockSpan]
+
+    private var openingParagraphID: String? {
+        document.blocks.first { block in
+            if case .paragraph = block { return true }
+            return false
+        }?.id
+    }
     private let coordinateSpace = "NativeChapterReaderView.scroll"
 
     @Environment(\.emptyPalette) private var palette
@@ -128,7 +135,7 @@ struct NativeChapterReaderView: View {
                         chapterBoundaryButton(.forward)
                             .padding(.top, 22)
                     }
-                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: maxTextWidth, alignment: .leading)
                     .padding(.horizontal, horizontalPadding(for: outer.size.width))
                     .padding(.top, 34)
                     .padding(.bottom, 96)
@@ -171,6 +178,9 @@ struct NativeChapterReaderView: View {
             selectableText(
                 for: block,
                 fontSize: headingSize(level),
+                paragraphSpacing: appearance.paragraphSpacing(fontSize: headingSize(level)) * 1.08,
+                justified: false,
+                firstLineHeadIndent: 0,
                 weight: .bold,
                 tone: .primary,
                 bullet: nil
@@ -218,6 +228,7 @@ struct NativeChapterReaderView: View {
                     text: block.text,
                     fontSize: max(12, fontSize - 2.5),
                     lineSpacing: textLineSpacing(for: max(12, fontSize - 2.5)),
+                    paragraphSpacing: appearance.paragraphSpacing(fontSize: max(12, fontSize - 2.5)) * 0.45,
                     weight: .regular,
                     tone: .secondary,
                     highlightRanges: localHighlightRanges(for: block),
@@ -243,6 +254,7 @@ struct NativeChapterReaderView: View {
             text: text,
             fontSize: max(12, fontSize - 3),
             lineSpacing: 2.5,
+            paragraphSpacing: appearance.paragraphSpacing(fontSize: max(12, fontSize - 3)) * 0.3,
             weight: .regular,
             tone: .primary,
             highlightRanges: localHighlightRanges(for: block),
@@ -299,45 +311,105 @@ struct NativeChapterReaderView: View {
         quoteStyle: Bool,
         bullet: String?
     ) -> some View {
-        Group {
-            if inlineMode != .none, inlineLayout == .parallel, let paragraph = block.readerParagraph {
-                HStack(alignment: .top, spacing: 22) {
-                    selectableText(
-                        for: block,
-                        fontSize: fontSize,
-                        weight: .regular,
-                        tone: quoteStyle ? .secondary : .primary,
-                        bullet: bullet
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    inlineNoteView(for: paragraph.idx)
+        let opening = block.id == openingParagraphID && !quoteStyle && bullet == nil
+        let effectiveFontSize = appearance.openingFontSize(
+            base: fontSize,
+            isOpeningParagraph: opening
+        )
+        let blockPadding = appearance.blockPadding(fontSize: effectiveFontSize)
+        let stackedSpacing = max(8, blockPadding + 1)
+        let justify = appearance.textAlignment.usesJustifiedText && !quoteStyle && bullet == nil
+        let firstLineIndent = bullet == nil
+            ? appearance.firstLineIndentPoints(
+                fontSize: effectiveFontSize,
+                isOpeningParagraph: opening
+            )
+            : 0
+        let dropCapCount = opening && appearance.chapterOpening.usesDropCap ? 1 : 0
+        let dropCapSize = opening && appearance.chapterOpening.usesDropCap
+            ? appearance.dropCapFontSize(base: effectiveFontSize)
+            : nil
+        return VStack(alignment: .leading, spacing: 0) {
+            if opening, appearance.chapterOpening.showsChapterHeader {
+                chapterHeader(fontSize: effectiveFontSize)
+            }
+
+            Group {
+                if inlineMode != .none, inlineLayout == .parallel, let paragraph = block.readerParagraph {
+                    HStack(alignment: .top, spacing: 22) {
+                        selectableText(
+                            for: block,
+                            fontSize: effectiveFontSize,
+                            paragraphSpacing: appearance.paragraphSpacing(fontSize: effectiveFontSize),
+                            justified: justify,
+                            firstLineHeadIndent: firstLineIndent,
+                            weight: .regular,
+                            tone: quoteStyle ? .secondary : .primary,
+                            bullet: bullet,
+                            dropCapCount: dropCapCount,
+                            dropCapFontSize: dropCapSize
+                        )
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 9) {
-                    selectableText(
-                        for: block,
-                        fontSize: fontSize,
-                        weight: .regular,
-                        tone: quoteStyle ? .secondary : .primary,
-                        bullet: bullet
-                    )
-                    if inlineMode != .none, let paragraph = block.readerParagraph {
                         inlineNoteView(for: paragraph.idx)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: stackedSpacing) {
+                        selectableText(
+                            for: block,
+                            fontSize: effectiveFontSize,
+                            paragraphSpacing: appearance.paragraphSpacing(fontSize: effectiveFontSize),
+                            justified: justify,
+                            firstLineHeadIndent: firstLineIndent,
+                            weight: .regular,
+                            tone: quoteStyle ? .secondary : .primary,
+                            bullet: bullet,
+                            dropCapCount: dropCapCount,
+                            dropCapFontSize: dropCapSize
+                        )
+                        if inlineMode != .none, let paragraph = block.readerParagraph {
+                            inlineNoteView(for: paragraph.idx)
+                        }
                     }
                 }
             }
+            .padding(.horizontal, quoteStyle ? max(16, blockPadding * 1.35) : 0)
+            .padding(.vertical, blockPadding)
+            .overlay(alignment: .leading) {
+                if quoteStyle {
+                    Rectangle()
+                        .fill(palette.accentSoft2)
+                        .frame(width: 3)
+                }
+            }
+            .background(visibilityProbe(for: block))
         }
-        .padding(.horizontal, quoteStyle ? 16 : 0)
-        .padding(.vertical, 8)
-        .overlay(alignment: .leading) {
-            if quoteStyle {
+    }
+
+    /// Book-style chapter opener: small centered title + decorative rule.
+    private func chapterHeader(fontSize: Double) -> some View {
+        let title = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .center, spacing: 10) {
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: max(13, fontSize - 1.5), weight: .bold, design: .serif))
+                    .foregroundStyle(palette.ink)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            HStack(spacing: 10) {
                 Rectangle()
-                    .fill(palette.accentSoft2)
-                    .frame(width: 3)
+                    .fill(palette.line2)
+                    .frame(height: 1)
+                Text("❦")
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.ink3)
+                Rectangle()
+                    .fill(palette.line2)
+                    .frame(height: 1)
             }
         }
-        .background(visibilityProbe(for: block))
+        .padding(.bottom, max(12, fontSize * 0.6))
     }
 
     private var inkHexes: (primary: UInt32, secondary: UInt32) {
@@ -355,9 +427,14 @@ struct NativeChapterReaderView: View {
     private func selectableText(
         for block: NativeChapterBlock,
         fontSize: Double,
+        paragraphSpacing: CGFloat,
+        justified: Bool,
+        firstLineHeadIndent: CGFloat,
         weight: NativeTextWeight,
         tone: NativeTextTone,
-        bullet: String?
+        bullet: String?,
+        dropCapCount: Int = 0,
+        dropCapFontSize: Double? = nil
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             if let bullet {
@@ -369,15 +446,20 @@ struct NativeChapterReaderView: View {
                 text: block.text,
                 fontSize: fontSize,
                 lineSpacing: textLineSpacing(for: fontSize),
+                paragraphSpacing: paragraphSpacing,
+                firstLineHeadIndent: firstLineHeadIndent,
                 weight: weight,
                 tone: tone,
                 highlightRanges: localHighlightRanges(for: block),
                 isDark: palette.isDark,
+                justified: justified,
                 fontFamily: appearance.font.familyName,
                 useSerifDesign: appearance.font.usesSerifDesign,
                 inkPrimaryHex: inkHexes.primary,
                 inkSecondaryHex: inkHexes.secondary,
                 clearSelection: !selectionActive || activeSelectionBlockID != block.id,
+                dropCapCount: dropCapCount,
+                dropCapFontSize: dropCapFontSize,
                 onSelectionChange: { updateSelection(for: block, localRange: $0) }
             )
         }
@@ -600,11 +682,19 @@ struct NativeChapterReaderView: View {
         max(3, CGFloat((lineSpacing - 1) * size))
     }
 
+    private var maxTextWidth: CGFloat {
+        #if os(macOS)
+        appearance.maxTextWidth(isMac: true)
+        #else
+        appearance.maxTextWidth(isMac: false)
+        #endif
+    }
+
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
         #if os(macOS)
-        max(46, min(96, width * 0.12))
+        appearance.scrollHorizontalPadding(viewWidth: width, isMac: true)
         #else
-        max(22, min(34, width * 0.08))
+        appearance.scrollHorizontalPadding(viewWidth: width, isMac: false)
         #endif
     }
 }

@@ -19,15 +19,11 @@ nonisolated enum BookFormat: String, Codable, CaseIterable, Sendable {
 
 /// A book in the user's library.
 ///
-/// Lives in the **synced** store (see `AppStores`): metadata, reading
-/// position, highlights, and sessions are the reader's own data and sync via
-/// CloudKit once the iCloud capability is enabled. The imported file and all
-/// text derived from it (`Chapter`, `Chunk`) stay in the local store and
-/// reference this book by `id` — cross-store object relationships don't
-/// exist, by design.
-///
-/// CloudKit rules apply to everything in the synced store: every attribute
-/// defaulted or optional, every relationship optional, no unique constraints.
+/// Lives in the **reader data** store (see `AppStores`): metadata, reading
+/// position, highlights, and sessions are the reader's own data. The imported
+/// file and all text derived from it (`Chapter`, `Chunk`) stay in the local
+/// store and reference this book by `id` — cross-store object relationships
+/// don't exist, by design.
 @Model
 final class Book {
     /// Stable identity for cross-store references (`Chapter.bookID`,
@@ -47,11 +43,11 @@ final class Book {
     }
 
     /// Imported file's path relative to `BookFileStore.rootDirectory`;
-    /// `nil` on a device that synced the metadata but doesn't hold the file.
+    /// retained only as local metadata in `.empty-notes` packages.
     var fileRelativePath: String?
 
-    /// Small JPEG thumbnail so a synced library still shows covers on
-    /// devices without the source file.
+    /// Small JPEG thumbnail so restored library rows still have covers even
+    /// when the source file is not included in the notes package.
     @Attribute(.externalStorage) var coverThumbnailData: Data?
 
     var addedAt: Date = Date()
@@ -90,8 +86,8 @@ final class Book {
     @Relationship(deleteRule: .cascade, inverse: \ReadingSession.book)
     var sessions: [ReadingSession]?
 
-    // CloudKit requires every relationship to carry an inverse; without this
-    // the `.automatic` synced container fails to initialize at launch.
+    // Every relationship carries an inverse so deletes sweep reader-authored
+    // child records without orphaning notes, cards, or bookmarks.
     @Relationship(deleteRule: .cascade, inverse: \StudyCardEntry.book)
     var studyCards: [StudyCardEntry]?
 

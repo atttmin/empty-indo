@@ -6,8 +6,8 @@
 import Foundation
 import SwiftData
 
-/// Local semantic index for synced `MemoryItem` rows. Keeps vectors in the
-/// local store so cross-book memory recall can blend lexical and semantic
+/// Local semantic index for `MemoryItem` rows. Keeps vectors in the local
+/// store so cross-book memory recall can blend lexical and semantic
 /// routes without recomputing every candidate on each query.
 @MainActor
 enum MemoryEmbeddingIndex {

@@ -55,6 +55,58 @@ struct EPUBImportTests {
         )
     }
 
+    @Test func openPathParsesSpineWithoutLoadingAllContent() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appending(path: "EPUBTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: tempDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let source = tempDirectory.appending(path: "raw-import.epub")
+        try TestEPUB.minimal().write(to: source)
+
+        let unzipDirectory = tempDirectory.appending(path: "unzipped", directoryHint: .isDirectory)
+        let parsed = try EPUBParser().parseBook(
+            at: source,
+            unzipDirectory: unzipDirectory,
+            loadContent: false
+        )
+
+        // Spine and metadata are available without holding every chapter in memory.
+        #expect(parsed.chapters.count == 2)
+        #expect(parsed.chapters.allSatisfy { $0.content.isEmpty })
+        #expect(parsed.metadata.title == "思维之书")
+
+        // Sanity-check the file we are about to load on demand exists.
+        // Chapter hrefs are relative to the OPF directory, not the unzip root.
+        let chapter0URL = parsed.opfDirectory.appendingPathComponent(parsed.chapters[0].href)
+        let chapter0Exists = FileManager.default.fileExists(atPath: chapter0URL.path)
+        let spine0ContentEmpty = parsed.chapters[0].content.isEmpty
+
+        // Loading a specific chapter fills only that chapter's content.
+        var book = parsed
+        book.loadContent(forChapterAt: 0)
+        let loadedContent = book.chapters[0].content
+        let loadedContentEmpty = loadedContent.isEmpty
+
+        if !chapter0Exists {
+            Issue.record("chapter0 file does not exist at \(chapter0URL.path)")
+        }
+        if !spine0ContentEmpty {
+            Issue.record("spine0 content should be empty but has \(parsed.chapters[0].content.count) chars")
+        }
+        if loadedContentEmpty {
+            Issue.record("loadedContent is empty after loadContent(forChapterAt: 0)")
+        }
+        #expect(chapter0Exists)
+        #expect(spine0ContentEmpty)
+        #expect(!loadedContentEmpty)
+        #expect(loadedContent.contains("第一章正文"))
+        #expect(book.chapters[1].content.isEmpty)
+    }
+
     @Test func corruptEPUBStillImportsWithFilenameTitle() throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appending(path: "EPUBTests-\(UUID().uuidString)", directoryHint: .isDirectory)

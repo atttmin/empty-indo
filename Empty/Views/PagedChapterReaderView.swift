@@ -209,6 +209,13 @@ private struct PageComposer {
         PagedColor(hex: appearance.theme.isDarkCanvas(baseIsDark: isDarkCanvas) ? 0xD86B47 : 0xB5482A)
     }
 
+    private var openingParagraphID: String? {
+        document.blocks.first { block in
+            if case .paragraph = block { return true }
+            return false
+        }?.id
+    }
+
     private func bodyFont(size: Double, bold: Bool = false) -> PagedFont {
         #if canImport(UIKit)
         if let family = appearance.font.familyName {
@@ -249,14 +256,17 @@ private struct PageComposer {
     private func paragraphStyle(
         spacingBefore: CGFloat = 0,
         spacing: CGFloat,
-        headIndent: CGFloat = 0
+        headIndent: CGFloat = 0,
+        firstLineHeadIndent: CGFloat? = nil,
+        justified: Bool = false
     ) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = max(3, CGFloat((lineSpacing - 1) * fontSize))
         style.paragraphSpacing = spacing
         style.paragraphSpacingBefore = spacingBefore
         style.headIndent = headIndent
-        style.firstLineHeadIndent = headIndent
+        style.firstLineHeadIndent = firstLineHeadIndent ?? headIndent
+        style.alignment = justified ? .justified : .natural
         return style
     }
 
@@ -304,15 +314,22 @@ private struct PageComposer {
                 bodyColor = inkSecondary.withAlphaComponent(0.55)
             }
 
+            let noteSpacing = appearance.paragraphSpacing(fontSize: max(13, fontSize - 2.5)) * 0.9
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: bodyFont(size: max(13, fontSize - 2.5)),
                 .foregroundColor: bodyColor,
-                .paragraphStyle: paragraphStyle(spacing: fontSize * 0.7, headIndent: 14),
+                .paragraphStyle: paragraphStyle(
+                    spacing: noteSpacing,
+                    headIndent: 14
+                ),
             ]
             let labelAttributes: [NSAttributedString.Key: Any] = [
                 .font: PagedFont.systemFont(ofSize: max(10, fontSize - 7), weight: .bold),
                 .foregroundColor: accent,
-                .paragraphStyle: paragraphStyle(spacing: fontSize * 0.7, headIndent: 14),
+                .paragraphStyle: paragraphStyle(
+                    spacing: noteSpacing,
+                    headIndent: 14
+                ),
             ]
             result.append(NSAttributedString(string: "\(label) · ", attributes: labelAttributes))
             result.append(NSAttributedString(string: body + "\n", attributes: attributes))
@@ -327,23 +344,42 @@ private struct PageComposer {
                     .foregroundColor: inkPrimary,
                     .paragraphStyle: paragraphStyle(
                         spacingBefore: fontSize * (level <= 2 ? 1.1 : 0.7),
-                        spacing: fontSize * 0.7
+                        spacing: appearance.paragraphSpacing(fontSize: size) * 1.08
                     ),
                 ])
 
             case .paragraph(_, _, let text):
+                let opening = block.id == openingParagraphID
+                let size = appearance.openingFontSize(base: fontSize, isOpeningParagraph: opening)
+                let start = result.length
                 appendBlockText(block, text: text, attributes: [
-                    .font: bodyFont(size: fontSize),
+                    .font: bodyFont(size: size),
                     .foregroundColor: inkPrimary,
-                    .paragraphStyle: paragraphStyle(spacing: fontSize * 0.62),
+                    .paragraphStyle: paragraphStyle(
+                        spacing: appearance.paragraphSpacing(fontSize: size),
+                        firstLineHeadIndent: appearance.firstLineIndentPoints(
+                            fontSize: size,
+                            isOpeningParagraph: opening
+                        ),
+                        justified: appearance.textAlignment.usesJustifiedText
+                    ),
                 ])
+                if opening, appearance.chapterOpening.usesDropCap {
+                    let dropSize = appearance.dropCapFontSize(base: size)
+                    let capLength = min(1, text.utf16.count)
+                    let capRange = NSRange(location: start, length: capLength)
+                    result.addAttribute(.font, value: bodyFont(size: dropSize), range: capRange)
+                }
                 if let paragraph = block.readerParagraph { appendNote(for: paragraph) }
 
             case .quote(_, _, let text):
                 appendBlockText(block, text: text, attributes: [
                     .font: bodyFont(size: fontSize),
                     .foregroundColor: inkSecondary,
-                    .paragraphStyle: paragraphStyle(spacing: fontSize * 0.62, headIndent: 16),
+                    .paragraphStyle: paragraphStyle(
+                        spacing: appearance.paragraphSpacing(fontSize: fontSize),
+                        headIndent: 16
+                    ),
                 ])
                 if let paragraph = block.readerParagraph { appendNote(for: paragraph) }
 
@@ -352,8 +388,9 @@ private struct PageComposer {
                     .font: bodyFont(size: fontSize),
                     .foregroundColor: inkPrimary,
                     .paragraphStyle: paragraphStyle(
-                        spacing: fontSize * 0.45,
-                        headIndent: CGFloat(max(0, level - 1)) * 18 + 4
+                        spacing: appearance.paragraphSpacing(fontSize: fontSize) * 0.78,
+                        headIndent: CGFloat(max(0, level - 1)) * 18 + 4,
+                        firstLineHeadIndent: 0
                     ),
                 ])
                 if let paragraph = block.readerParagraph { appendNote(for: paragraph) }
@@ -362,7 +399,11 @@ private struct PageComposer {
                 appendBlockText(block, text: text, marker: "注 · ", attributes: [
                     .font: bodyFont(size: max(12, fontSize - 2.5)),
                     .foregroundColor: inkSecondary,
-                    .paragraphStyle: paragraphStyle(spacing: fontSize * 0.55, headIndent: 10),
+                    .paragraphStyle: paragraphStyle(
+                        spacing: appearance.paragraphSpacing(fontSize: max(12, fontSize - 2.5)) * 0.72,
+                        headIndent: 10,
+                        firstLineHeadIndent: 0
+                    ),
                 ])
                 if let paragraph = block.readerParagraph { appendNote(for: paragraph) }
 
@@ -370,7 +411,10 @@ private struct PageComposer {
                 appendBlockText(block, text: text, attributes: [
                     .font: PagedFont.monospacedSystemFont(ofSize: max(12, fontSize - 3), weight: .regular),
                     .foregroundColor: inkPrimary,
-                    .paragraphStyle: paragraphStyle(spacing: fontSize * 0.62, headIndent: 8),
+                    .paragraphStyle: paragraphStyle(
+                        spacing: appearance.paragraphSpacing(fontSize: max(12, fontSize - 3)) * 0.82,
+                        headIndent: 8
+                    ),
                 ])
 
             case .table(_, let rows):
@@ -579,9 +623,10 @@ struct PagedChapterReaderView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let pageInset = horizontalInset(for: geometry.size.width)
             let textSize = CGSize(
-                width: max(40, geometry.size.width - horizontalInset * 2),
-                height: max(80, geometry.size.height - verticalInset * 2)
+                width: max(40, geometry.size.width - pageInset * 2),
+                height: max(80, geometry.size.height - verticalInset * 2 - pageFooterHeight)
             )
             ZStack {
                 palette.window.ignoresSafeArea()
@@ -589,16 +634,39 @@ struct PagedChapterReaderView: View {
                 if let paginated {
                     TabView(selection: $pageIndex) {
                         ForEach(0..<paginated.pageCount, id: \.self) { index in
-                            PageTextView(
-                                text: paginated.pageText(index),
-                                globalLocation: paginated.characterRange(forPage: index).location,
-                                clearSelection: !selectionActive,
-                                onSelectionChange: { handleSelection($0) },
-                                onTapAt: { handleTap(fraction: $0) }
-                            )
-                            .frame(width: textSize.width, height: textSize.height)
-                            .padding(.horizontal, horizontalInset)
-                            .padding(.vertical, verticalInset)
+                            ZStack(alignment: .bottom) {
+                                pageBackdrop(
+                                    horizontalInset: pageInset,
+                                    verticalInset: verticalInset
+                                )
+
+                                VStack(spacing: 0) {
+                                    if index == 0, appearance.chapterOpening.showsChapterHeader {
+                                        pageChapterHeader(fontSize: fontSize)
+                                            .padding(.horizontal, pageInset)
+                                            .padding(.top, verticalInset + 4)
+                                    }
+
+                                    PageTextView(
+                                        text: paginated.pageText(index),
+                                        globalLocation: paginated.characterRange(forPage: index).location,
+                                        clearSelection: !selectionActive,
+                                        onSelectionChange: { handleSelection($0) },
+                                        onTapAt: { handleTap(fraction: $0) }
+                                    )
+                                    .frame(
+                                        width: textSize.width,
+                                        height: max(40, textSize.height - (index == 0 && appearance.chapterOpening.showsChapterHeader ? appearance.chapterHeaderSpacing(fontSize: fontSize) : 0))
+                                    )
+                                    .padding(.horizontal, pageInset)
+                                    .padding(.top, index == 0 && appearance.chapterOpening.showsChapterHeader ? 0 : verticalInset)
+                                    .padding(.bottom, verticalInset + pageFooterHeight)
+                                }
+
+                                pageFooter(index: index, count: paginated.pageCount)
+                                    .padding(.horizontal, pageInset + 4)
+                                    .padding(.bottom, verticalInset * 0.78)
+                            }
                             .tag(index)
                         }
                     }
@@ -622,8 +690,82 @@ struct PagedChapterReaderView: View {
         }
     }
 
-    private var horizontalInset: CGFloat { 24 }
+    private var pageFooterHeight: CGFloat { 30 }
     private var verticalInset: CGFloat { 14 }
+
+    private func horizontalInset(for width: CGFloat) -> CGFloat {
+        appearance.pagedHorizontalInset(viewWidth: width, isMac: false)
+    }
+
+    private func pageBackdrop(horizontalInset: CGFloat, verticalInset: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 24)
+            .fill(appearance.theme.pageFill(baseIsDark: palette.isDark))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24)
+                    .strokeBorder(
+                        appearance.theme.pageRule(baseIsDark: palette.isDark),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: palette.isDark ? .black.opacity(0.26) : Color.black.opacity(0.08),
+                radius: 16,
+                y: 7
+            )
+            .padding(.horizontal, horizontalInset * 0.46)
+            .padding(.vertical, verticalInset * 0.4)
+    }
+
+    private func pageFooter(index: Int, count: Int) -> some View {
+        let chapterLabel = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "本章"
+            : chapter.title
+        return HStack(spacing: 10) {
+            Text(chapterLabel)
+                .lineLimit(1)
+            Spacer(minLength: 10)
+            Text("第 \(index + 1) / \(count) 页")
+                .monospacedDigit()
+        }
+        .font(.system(size: 11.5, weight: .medium, design: .serif))
+        .foregroundStyle(palette.ink3)
+        .padding(.top, 10)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(appearance.theme.pageRule(baseIsDark: palette.isDark))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(chapterLabel) · 第 \(index + 1) / \(count) 页")
+        .accessibilityIdentifier("reader.page.footer")
+    }
+    /// Book-style chapter header for the first page of a paged chapter.
+    private func pageChapterHeader(fontSize: Double) -> some View {
+        let title = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .center, spacing: 8) {
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: max(12, fontSize - 2), weight: .bold, design: .serif))
+                    .foregroundStyle(palette.ink)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            HStack(spacing: 8) {
+                Rectangle()
+                    .fill(appearance.theme.pageRule(baseIsDark: palette.isDark))
+                    .frame(height: 1)
+                Text("❦")
+                    .font(.system(size: 9))
+                    .foregroundStyle(palette.ink3)
+                Rectangle()
+                    .fill(appearance.theme.pageRule(baseIsDark: palette.isDark))
+                    .frame(height: 1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.bottom, 4)
+    }
 
     /// 微信读书-style tap navigation: left quarter back, right quarter
     /// forward, middle toggles the chrome. A pending selection makes the
@@ -961,28 +1103,46 @@ struct MacPagedChapterReaderView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let pageInset = horizontalInset(for: geometry.size.width)
             let textSize = CGSize(
-                width: min(700, max(200, geometry.size.width - horizontalInset * 2)),
-                height: max(120, geometry.size.height - verticalInset * 2)
+                width: min(
+                    appearance.maxTextWidth(isMac: true),
+                    max(200, geometry.size.width - pageInset * 2)
+                ),
+                height: max(120, geometry.size.height - verticalInset * 2 - pageFooterHeight)
             )
             ZStack {
                 palette.window
 
                 if let paginated {
-                    MacPageTextView(
-                        text: paginated.pageText(pageIndex),
-                        globalLocation: paginated.characterRange(forPage: pageIndex).location,
-                        pageSize: textSize,
-                        vertical: verticalText,
-                        clearSelection: !selectionActive,
-                        onSelectionChange: { handleSelection($0) },
-                        onClickAt: { handleTap(fraction: $0) }
-                    )
-                    .frame(width: textSize.width, height: textSize.height)
-                    .id("\(paginated.version)-\(pageIndex)")
-                    .transition(.opacity)
+                    ZStack(alignment: .bottom) {
+                        pageBackdrop(
+                            horizontalInset: pageInset,
+                            verticalInset: verticalInset
+                        )
 
-                    pageArrows
+                        MacPageTextView(
+                            text: paginated.pageText(pageIndex),
+                            globalLocation: paginated.characterRange(forPage: pageIndex).location,
+                            pageSize: textSize,
+                            vertical: verticalText,
+                            clearSelection: !selectionActive,
+                            onSelectionChange: { handleSelection($0) },
+                            onClickAt: { handleTap(fraction: $0) }
+                        )
+                        .frame(width: textSize.width, height: textSize.height)
+                        .padding(.horizontal, pageInset)
+                        .padding(.top, verticalInset)
+                        .padding(.bottom, verticalInset + pageFooterHeight)
+                        .id("\(paginated.version)-\(pageIndex)")
+                        .transition(.opacity)
+
+                        pageFooter(count: paginated.pageCount)
+                            .padding(.horizontal, pageInset + 4)
+                            .padding(.bottom, verticalInset * 0.72)
+
+                        pageArrows
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1010,8 +1170,55 @@ struct MacPagedChapterReaderView: View {
         }
     }
 
-    private var horizontalInset: CGFloat { 72 }
+    private var pageFooterHeight: CGFloat { 34 }
     private var verticalInset: CGFloat { 36 }
+
+    private func horizontalInset(for width: CGFloat) -> CGFloat {
+        appearance.pagedHorizontalInset(viewWidth: width, isMac: true)
+    }
+
+    private func pageBackdrop(horizontalInset: CGFloat, verticalInset: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 24)
+            .fill(appearance.theme.pageFill(baseIsDark: palette.isDark))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24)
+                    .strokeBorder(
+                        appearance.theme.pageRule(baseIsDark: palette.isDark),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: palette.isDark ? .black.opacity(0.32) : Color.black.opacity(0.10),
+                radius: 18,
+                y: 8
+            )
+            .padding(.horizontal, horizontalInset * 0.42)
+            .padding(.vertical, verticalInset * 0.28)
+    }
+
+    private func pageFooter(count: Int) -> some View {
+        let chapterLabel = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "本章"
+            : chapter.title
+        return HStack(spacing: 10) {
+            Text(chapterLabel)
+                .lineLimit(1)
+            Spacer(minLength: 10)
+            Text("第 \(pageIndex + 1) / \(count) 页")
+                .monospacedDigit()
+        }
+        .font(.system(size: 11.5, weight: .medium, design: .serif))
+        .foregroundStyle(palette.ink3)
+        .padding(.top, 11)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(appearance.theme.pageRule(baseIsDark: palette.isDark))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(chapterLabel) · 第 \(pageIndex + 1) / \(count) 页")
+        .accessibilityIdentifier("reader.page.footer")
+    }
 
     private var pageArrows: some View {
         HStack {

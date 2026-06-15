@@ -22,8 +22,8 @@ Empty 已有：
 |------|------|------------------------|
 | 伴读问「这和我之前读过的什么有关？」 | 只能查当前书已读 Chunk | 先召回跨书高亮/链接卡/历史 Q&A，再解释 |
 | 思维链接 | UI 选中文本才触发；词法阈值粗 | 语义召回 + Agent 多步编排；伴读内可主动查 |
-| 长期偏好 | 无 | 「读者关注：减法、自然、词汇 X」可检索、可同步 |
-| 跨设备 | 高亮可 CloudKit；记忆语义未成体系 | 记忆元数据同步；正文仍本地 |
+| 长期偏好 | 无 | 「读者关注：减法、自然、词汇 X」可检索、可导出 |
+| 备份 | 高亮/卡片散落在本机 store | `.empty-notes` 读者笔记包可迁移元数据；正文仍本地 |
 
 **Agent 不是目的，是编排层**：在防剧透边界内，串联「书内检索 → 读者记忆 → 思维链接 → 解释 → 建议存卡」。
 
@@ -39,7 +39,7 @@ Empty 已有：
 
 - 不接 Claude Agent SDK（Python/TS，面向写代码）
 - 不把书正文上传第三方 Memory 服务
-- Phase 1 不做 Passkey / 账号体系（Phase 2 再作为同步壳层）
+- 当前不做 Passkey / 自建账号体系 / 云同步；备份先只考虑本地读者笔记包
 
 ---
 
@@ -105,7 +105,7 @@ ThoughtLinkFinder.findLink()
 
 ## 3. 数据模型
 
-### 3.1 `MemoryItem`（Synced Store — 与 Highlight 同级）
+### 3.1 `MemoryItem`（Reader Data Store — 与 Highlight 同级）
 
 ```swift
 enum MemoryKind: String, Codable {
@@ -134,7 +134,7 @@ final class MemoryItem {
 }
 ```
 
-**CloudKit 约束**：与现有模型一致，无 unique 约束；`tags` 用可序列化形式存储。
+**存储约束**：无 unique 约束；`tags` 用可序列化形式存储，方便未来导出。
 
 ### 3.2 `MemoryEmbedding`（Local Store — 可选 Phase 1b）
 
@@ -222,7 +222,7 @@ case saveMemory(title: String, body: String, tags: [String])
 
 ### Phase 1 — 本地 ReaderMemory（已实现）
 
-**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory`、旧问答压缩为 `theme`、`ThoughtLinkFinder` 记忆召回路、本地 `MemoryEmbedding` 持久语义路均已落地；伴读主题提炼已有自动 + 手动入口。同步壳层已升级为 **local / iCloud live sync + folder/server snapshot backup + auto sync + local mutation journal + queued retry + background scheduling shell + base conflict policy + passkey account shell**，后续主要剩更完整后台 sync 与便携导出层。
+**状态**：`MemoryItem`、`ReaderMemory.syncFromReaderData()`、`recall_reader_memory`、`search_highlights`、`propose_memory`、旧问答压缩为 `theme`、`ThoughtLinkFinder` 记忆召回路、本地 `MemoryEmbedding` 持久语义路均已落地；伴读主题提炼已有自动 + 手动入口。当前没有云同步：`MemoryItem` 元数据只在本机，可随 `.empty-notes` 读者笔记包导出 / 导入，语义向量与正文仍只留本机。
 
 | 任务 ID | 内容 | 验收 |
 |---------|------|------|
@@ -254,16 +254,13 @@ case saveMemory(title: String, body: String, tags: [String])
 | P2-2 | 伴读结束时可选提炼主题（仅 cloud / 本机 FM） | 已实现基础版：Mac / iOS 伴读可手动「提炼本轮主题」，连续有效问答后也会自动提出 `theme` 草案 |
 | P2-3 | 记忆压缩：旧 `companionQA` 合并为 `theme` | 已实现：手动压缩入口 + 旧问答退出 recall，仅保留派生 `theme` |
 
-### Phase 3 — 跨设备同步与账号（部分实现）
+### Phase 3 — 读者笔记包备份（已实现基础版）
 
 | 任务 ID | 内容 | 状态 |
 |---------|------|------|
-| P3-1 | Synced Store 支持 local / CloudKit live provider | 已实现：`SyncLiveMode` + `AppSession` 驱动容器切换 |
-| P3-2 | 文件夹 / HTTPS server 快照备份壳层（第三方云第一阶段） | 已实现：`SyncSnapshot` + `FolderBackupProvider` + `ServerSnapshotClient` + `SyncSettingsView` |
-| P3-3 | live sync 协议层与 provider 状态探测 | 已实现：`ReaderLiveSyncDelta`、pull/push 契约、`CloudKitLiveSyncProvider`、`ServerLiveSyncProvider` |
-| P3-4 | 手动 live sync 协调器与 cursor 持久化 | 已实现：`ServerSyncCoordinator`、server cursor / pull / push 时间持久化、设置页手动 pull / push / sync |
-| P3-5 | 更简单的自动同步壳层 | 已实现：本地 `SyncMutationJournal`、前台自动 pull + 增量 / tombstone push、失败后自动排队重试、iOS/macOS 系统后台唤醒调度壳层、`keepLocal` / `keepRemote` 基础冲突策略、自动同步开关 / 间隔、待同步变化提示、简化设置引导 |
-| P3-6 | Passkey 或 Sign in with Apple 作为「记忆容器」账号 | 已实现基础壳层：兼容 server 可创建 / 登录 / 刷新 / 退出 Passkey 账号，会话 token 仅入 Keychain；服务端 challenge / device/session 管理仍待实现 |
+| P3-1 | 定义 `.empty-notes` manifest 与 JSON payload | 已实现：单文件 JSON，schemaVersion 1 |
+| P3-2 | 导出 Book/Highlight/Vocab/Bookmark/StudyCard/MemoryItem | 已实现：`ReaderNotesBackupStore.exportPackage` |
+| P3-3 | 导入合并 + 保守记忆冲突策略 | 已实现：同 id upsert；本机较新的 `MemoryItem` 不被旧备份覆盖 |
 
 ### Phase 3+ — Walrus Memory 可选便携层（见 §7.5，非默认）
 
@@ -367,28 +364,20 @@ case saveMemory(title: String, body: String, tags: [String])
   | 可验证 / 去中心化 | ❌ | ❌ | ✅ |
   | 实现复杂度 | 中 | 中 | **高** |
 
-- **结论**：**技术上可做，不适合作为 Empty 主 Memory 层**；与 Mem0 同属「对话/摘要型」外挂，但更重、更偏 Web3 agent 基础设施。**仅建议在 Phase 3+ 作为「可选便携备份层」** — 且必须满足：只同步 `isUserConfirmed` 摘要、自建 relay、设置默认关闭、本地 recall 优先。详见 §7.5。
+- **结论**：**技术上可做，不适合作为 Empty 主 Memory 层**；与 Mem0 同属「对话/摘要型」外挂，但更重、更偏 Web3 agent 基础设施。当前版本不接入，只保留为远期研究材料。详见 §7.5。
 
 ### 7.4 推荐选型
 
 ```
 Phase 1–2（现在）     → 自研 ReaderMemory（本方案主路径）
-Phase 3 跨设备        → synced store 走 local / CloudKit；folder/server 走 snapshot backup
-Phase 3.1 live 协议    → `ReaderLiveSyncDelta` + cursor/tombstone + provider status probe
-Phase 3.2 手动 sync    → `ServerSyncCoordinator` 手动 pull / push / 双向同步
-Phase 3.3 前台自动 sync → 定时 pull + fingerprint 判定是否 push；UI 已尽量简化
-Phase 4 账号壳        → Passkey 作账号层；server 才进入更完整后台 delta sync
-实验性/不作为主路径   → Walrus 只做派生摘要便携副本；默认关闭
+Phase 3 备份          → 本地 `.empty-notes` 读者笔记包
+实验性/不作为主路径   → 云同步、账号、多用户先不做
 ```
 
-### 7.1 关于 Passkey 与 Walrus 的定位
+### 7.1 关于便携记忆的定位
 
-- **Passkey（后续 Phase）** 解决的是「谁是这个读者」— 账号壳、设备授权、server 身份。
-- **Walrus Memory（可选后续）** 解决的是「记忆能否带到别的 Agent/App」— 与 Empty 主路径正交，不是 Passkey 的替代品。
-- 推荐组合：
-  1. **主同步**：本机 / CloudKit / 自建 API 三选一同步 `MemoryItem` 元数据。
-  2. **可选导出**：用户显式开启后，再把 confirmed 摘要 push 到 Walrus namespace。
-  3. **身份绑定**：Passkey 登录你的 relay / sync server；不在 App 内直接管理 Sui 私钥。
+- **当前主路径**：ReaderMemory 只在本机参与伴读。
+- **便携记忆（可选后续）**：若未来需要把主题摘要带到别的 Agent/App，先做显式导出；不在当前 app 内预留账号或 server 壳层。
 - **伴读合并策略**（若启用路径 C）：
 
   ```
@@ -407,7 +396,7 @@ Phase 4 账号壳        → Passkey 作账号层；server 才进入更完整后
 ### PR-1：模型与存储
 
 - [ ] `MemoryItem` + `MemoryKind`
-- [ ] `AppStores` synced store 注册
+- [ ] `AppStores` reader data store 注册
 - [ ] `ReaderMemoryTests`: 插入与 fetch
 
 ### PR-2：Ingest 管道

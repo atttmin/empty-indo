@@ -7,7 +7,7 @@ import Foundation
 import SwiftData
 
 /// A reader-placed bookmark (P0 handoff: the 目录/书签/搜索 drawer).
-/// Synced store — bookmarks are reader data, like highlights.
+/// Reader data store — bookmarks are reader data, like highlights.
 ///
 /// Set `book` after inserting into a context (SwiftData relationships are
 /// only safe to wire between inserted models).

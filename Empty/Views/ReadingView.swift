@@ -117,8 +117,8 @@ struct ReadingView: View {
     let book: Book
     /// Tab-hosted on iOS: back returns to 书库 instead of popping.
     var onExit: (() -> Void)?
-    /// 追问 hand-off to the 朱 companion sheet (question, live position).
-    var onAskCompanion: ((String, ReadingPosition) -> Void)?
+    /// 追问 hand-off to the 朱 companion sheet (question, selected text, live position).
+    var onAskCompanion: ((String, String?, ReadingPosition) -> Void)?
     /// Mirrors the tap-to-hide chrome so the shell can hide its tab bar.
     var onControlsChange: ((Bool) -> Void)?
 
@@ -143,6 +143,7 @@ struct ReadingView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var showChapterList = false
+    @State private var chapterListTab: ChapterListTab = .toc
     @State private var showSettings = false
     @State private var showRecap = false
     @State private var recapCache: RecapCache?
@@ -155,19 +156,24 @@ struct ReadingView: View {
     @State private var dictionaryTerm = ""
     @State private var saveErrorMessage: String?
     @State private var showControls = true
+    @State private var bookmarkedHere = false
     @AppStorage("reader.fontSize") private var fontSize: Double = 18
     @AppStorage("reader.lineSpacing") private var lineSpacing: Double = 1.6
     @AppStorage("reader.theme") private var readerTheme: ReaderTheme = .paper
     @AppStorage("reader.font") private var readerFont: ReaderFont = .serif
-    @AppStorage("reader.pageturn.ios") private var pageTurn: ReaderPageTurn = .scroll
+    @AppStorage("reader.contentWidth") private var readerContentWidth: ReaderContentWidth = .medium
+    @AppStorage("reader.firstLineIndent") private var readerFirstLineIndent: ReaderFirstLineIndent = .classic
+    @AppStorage("reader.paragraphSpacing") private var readerParagraphSpacing: ReaderParagraphSpacingStyle = .book
+    @AppStorage("reader.textAlignment") private var readerTextAlignment: ReaderTextAlignmentStyle = .justified
+    @AppStorage("reader.chapterOpening") private var readerChapterOpening: ReaderChapterOpeningStyle = .outdent
+    @AppStorage("reader.pageturn.ios") private var pageTurn: ReaderPageTurn = .paged
     @AppStorage("reader.mode.ios") private var readingMode: IOSReadingMode = .original
     @State private var inlineNotes: [InlineNotePaint] = []
     @State private var inlineCache: [Int: String] = [:]
     @State private var inlineRetryCounts: [Int: Int] = [:]
     @State private var inlineInFlight: Set<Int> = []
     @State private var pretransTask: Task<Void, Never>?
-    @State private var marginNote: String?
-    @State private var marginSubject: String?
+    @State private var selectionInsight: ReaderSelectionInsight?
     @State private var isSelectionWorking = false
     @State private var thoughtLinks: [ThoughtLink] = []
     @State private var expandedThoughtLinkIDs: Set<String> = []
@@ -184,7 +190,7 @@ struct ReadingView: View {
     init(
         book: Book,
         onExit: (() -> Void)? = nil,
-        onAskCompanion: ((String, ReadingPosition) -> Void)? = nil,
+        onAskCompanion: ((String, String?, ReadingPosition) -> Void)? = nil,
         onControlsChange: ((Bool) -> Void)? = nil
     ) {
         self.book = book
@@ -272,7 +278,7 @@ struct ReadingView: View {
             inlineMode: inlineNoteKind,
             inlineLayout: .stacked,
             inlineNotes: inlineNotes,
-            appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+            appearance: readerAppearance,
             speechRange: aloud.currentSentenceRange,
             selectionActive: pendingSelection != nil,
             onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
@@ -292,12 +298,29 @@ struct ReadingView: View {
     private func readerContent(_ book: EPUBBook) -> some View {
         VStack(spacing: 0) {
             if showControls {
+                #if os(iOS)
+                if pageTurn == .paged {
+                    readerTopBarMinimal(
+                        title: book.metadata.title,
+                        subtitle: chapterSubtitle(sectionLabel: "章")
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                } else {
+                    readerTopBar(
+                        title: book.metadata.title,
+                        subtitle: chapterSubtitle(sectionLabel: "章"),
+                        showsBilingual: true
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                #else
                 readerTopBar(
                     title: book.metadata.title,
                     subtitle: chapterSubtitle(sectionLabel: "章"),
                     showsBilingual: true
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
+                #endif
             }
 
             ZStack(alignment: .bottom) {
@@ -315,7 +338,7 @@ struct ReadingView: View {
                             highlights: chapterHighlights,
                             inlineMode: inlineNoteKind,
                             inlineNotes: inlineNotes,
-                            appearance: ReaderAppearance(theme: readerTheme, font: readerFont),
+                            appearance: readerAppearance,
                             selectionActive: pendingSelection != nil,
                             onTap: { withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() } },
                             onChapterBoundary: { direction in
@@ -345,13 +368,16 @@ struct ReadingView: View {
             ChapterListView(
                 titles: sectionTitles,
                 unitLabel: "章",
-                currentIndex: currentChapterIndex
-            ) { index in
-                currentChapterIndex = index
-                currentUTF16Offset = 0
-                chapterLanding = .start
-                showChapterList = false
-            }
+                currentIndex: currentChapterIndex,
+                book: self.book,
+                currentPosition: currentReadingPosition,
+                initialTab: chapterListTab,
+                onSelect: { index in
+                    jump(to: ReadingPosition(chapterIndex: index, utf16Offset: 0))
+                    showChapterList = false
+                },
+                onJump: jump(to:)
+            )
             #if os(macOS)
             .frame(minWidth: 380, minHeight: 460)
             #endif
@@ -362,6 +388,11 @@ struct ReadingView: View {
                 lineSpacing: $lineSpacing,
                 theme: $readerTheme,
                 font: $readerFont,
+                contentWidth: $readerContentWidth,
+                firstLineIndent: $readerFirstLineIndent,
+                paragraphSpacing: $readerParagraphSpacing,
+                textAlignment: $readerTextAlignment,
+                chapterOpening: $readerChapterOpening,
                 pageTurn: $pageTurn,
                 bookID: self.book.id
             )
@@ -383,9 +414,7 @@ struct ReadingView: View {
         }
         .sheet(isPresented: $showHighlights) {
             HighlightsListView(book: self.book) { position in
-                currentChapterIndex = position.chapterIndex
-                currentUTF16Offset = position.utf16Offset
-                chapterLanding = .start
+                jump(to: position)
             }
             #if os(macOS)
             .frame(minWidth: 420, minHeight: 460)
@@ -406,9 +435,29 @@ struct ReadingView: View {
                 handleSelectionChange(selection)
             }
         }
-        .onChange(of: currentChapterIndex) { _, _ in
+        .sheet(item: $selectionInsight) { insight in
+            SelectionInsightSheet(insight: insight) {
+                Button("继续追问 ↩") {
+                    askCompanion(about: insight.subject)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(palette.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .overlay(Capsule().strokeBorder(palette.accent, lineWidth: 1))
+            }
+        }
+        .onChange(of: currentChapterIndex) { _, newIndex in
+            // Load the target chapter's XHTML on demand. Only the current
+            // chapter is kept in memory, so large EPUBs don't bloat the heap.
+            if var book = epubBook, book.chapters.indices.contains(newIndex) {
+                book.loadContent(forChapterAt: newIndex)
+                epubBook = book
+            }
             resetChapterArtifacts()
             refreshChapterHighlights()
+            refreshBookmarkState()
             // Shift the 预译 window (current + next two chapters).
             startPretranslation()
         }
@@ -486,12 +535,16 @@ struct ReadingView: View {
                 ChapterListView(
                     titles: sectionTitles,
                     unitLabel: "页",
-                    currentIndex: currentChapterIndex
-                ) { index in
-                    currentChapterIndex = index
-                    syncPageProgress(at: index)
-                    showChapterList = false
-                }
+                    currentIndex: currentChapterIndex,
+                    book: self.book,
+                    currentPosition: currentReadingPosition,
+                    initialTab: chapterListTab,
+                    onSelect: { index in
+                        jump(to: ReadingPosition(chapterIndex: index, utf16Offset: 0))
+                        showChapterList = false
+                    },
+                    onJump: jump(to:)
+                )
                 #if os(macOS)
                 .frame(minWidth: 380, minHeight: 460)
                 #endif
@@ -508,8 +561,7 @@ struct ReadingView: View {
             }
             .sheet(isPresented: $showHighlights) {
                 HighlightsListView(book: self.book) { position in
-                    currentChapterIndex = position.chapterIndex
-                    syncPageProgress(at: position.chapterIndex)
+                    jump(to: position)
                 }
                 #if os(macOS)
                 .frame(minWidth: 420, minHeight: 460)
@@ -532,6 +584,18 @@ struct ReadingView: View {
         return sectionTitles[currentChapterIndex]
     }
 
+    private var readerAppearance: ReaderAppearance {
+        ReaderAppearance(
+            theme: readerTheme,
+            font: readerFont,
+            contentWidth: readerContentWidth,
+            firstLineIndent: readerFirstLineIndent,
+            paragraphSpacing: readerParagraphSpacing,
+            textAlignment: readerTextAlignment,
+            chapterOpening: readerChapterOpening
+        )
+    }
+
     private func syncPageProgress(at index: Int) {
         currentChapterIndex = index
         if let plainText = currentChapterPlainText() {
@@ -540,6 +604,55 @@ struct ReadingView: View {
             currentUTF16Offset = 0
         }
         refreshChapterHighlights()
+        refreshBookmarkState()
+    }
+
+    private func openChapterDrawer(_ tab: ChapterListTab) {
+        chapterListTab = tab
+        showChapterList = true
+    }
+
+    private func jump(to position: ReadingPosition) {
+        let chapterIndex = min(max(position.chapterIndex, 0), max(sectionCount - 1, 0))
+        currentChapterIndex = chapterIndex
+        currentUTF16Offset = max(0, position.utf16Offset)
+        chapterLanding = .start
+        showChapterList = false
+        refreshChapterHighlights()
+        refreshBookmarkState()
+    }
+
+    private func refreshBookmarkState() {
+        bookmarkedHere = ((try? BookmarkStore(modelContext: modelContext)
+            .bookmarks(for: book)) ?? [])
+            .contains {
+                $0.chapterIndex == currentChapterIndex
+                    && abs($0.utf16Offset - currentUTF16Offset) < 600
+            }
+    }
+
+    private func toggleBookmark() {
+        let snippet = bookmarkSnippet()
+        let added = (try? BookmarkStore(modelContext: modelContext).toggle(
+            book: book,
+            chapterIndex: currentChapterIndex,
+            utf16Offset: currentUTF16Offset,
+            snippet: snippet
+        )) ?? false
+        bookmarkedHere = added
+    }
+
+    private func bookmarkSnippet() -> String {
+        guard let text = currentChapterPlainText(), !text.isEmpty else {
+            return currentSectionTitle
+        }
+        let utf16 = Array(text.utf16)
+        let start = min(max(currentUTF16Offset, 0), utf16.count)
+        let end = min(start + 80, utf16.count)
+        let excerpt = String(decoding: utf16[start..<end], as: UTF16.self)
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return excerpt.isEmpty ? currentSectionTitle : excerpt
     }
 
     // MARK: 朱批 chrome (02 iOS prototype)
@@ -624,9 +737,37 @@ struct ReadingView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("reader.aloud")
 
+            Button {
+                openChapterDrawer(.search)
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(palette.ink3)
+                    .padding(.horizontal, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("reader.search")
+
+            Button {
+                toggleBookmark()
+            } label: {
+                Image(systemName: bookmarkedHere ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(bookmarkedHere ? palette.accent : palette.ink3)
+                    .padding(.horizontal, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("reader.bookmark")
+
             Menu {
-                Button("目录", systemImage: "list.bullet") { showChapterList = true }
+                Button("目录", systemImage: "list.bullet") { openChapterDrawer(.toc) }
                     .accessibilityIdentifier("reader.menu.chapterList")
+                Button("书签", systemImage: "bookmark") { openChapterDrawer(.bookmarks) }
+                    .accessibilityIdentifier("reader.menu.bookmarks")
+                Button("搜索", systemImage: "magnifyingglass") { openChapterDrawer(.search) }
+                    .accessibilityIdentifier("reader.menu.search")
                 Button("高亮", systemImage: "highlighter") { showHighlights = true }
                     .accessibilityIdentifier("reader.menu.highlights")
                 Button("前情回顾", systemImage: "sparkles") { showRecap = true }
@@ -648,6 +789,92 @@ struct ReadingView: View {
         .padding(.vertical, 10)
         .background(.ultraThinMaterial)
     }
+    /// Immersive top bar for paged mode: transparent, fewer controls, and a
+    /// single overflow menu so the page surface stays the hero.
+    private func readerTopBarMinimal(
+        title: String,
+        subtitle: String
+    ) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                exitReader()
+            } label: {
+                Text("‹")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+                    .padding(.horizontal, 6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("reader.back")
+
+            Spacer(minLength: 0)
+
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .foregroundStyle(palette.ink)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(palette.ink3)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                openChapterDrawer(.search)
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.ink3)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("reader.search")
+
+            Button {
+                toggleBookmark()
+            } label: {
+                Image(systemName: bookmarkedHere ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(bookmarkedHere ? palette.accent : palette.ink3)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("reader.bookmark")
+
+            Menu {
+                Button("目录", systemImage: "list.bullet") { openChapterDrawer(.toc) }
+                    .accessibilityIdentifier("reader.menu.chapterList")
+                Button("书签", systemImage: "bookmark") { openChapterDrawer(.bookmarks) }
+                    .accessibilityIdentifier("reader.menu.bookmarks")
+                Button("搜索", systemImage: "magnifyingglass") { openChapterDrawer(.search) }
+                    .accessibilityIdentifier("reader.menu.search")
+                Button("高亮", systemImage: "highlighter") { showHighlights = true }
+                    .accessibilityIdentifier("reader.menu.highlights")
+                Button("前情回顾", systemImage: "sparkles") { showRecap = true }
+                    .accessibilityIdentifier("reader.menu.recap")
+                Button("阅读设置", systemImage: "textformat.size") { showSettings = true }
+                    .accessibilityIdentifier("reader.menu.settings")
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(palette.ink3)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("reader.overflow")
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(palette.window.opacity(0.001))
+    }
 
     /// "第 N/M 章 · X%[ · 剩 Y 页]" — the prototype's position line.
     private func chapterSubtitle(sectionLabel: String) -> String {
@@ -667,29 +894,11 @@ struct ReadingView: View {
         return parts.joined(separator: " · ")
     }
 
-    /// Floating layers over the reading surface: margin note, thought
-    /// link, selection actions, and the aloud bar. Shared by EPUB and PDF.
+    /// Floating layers over the reading surface: thought links, selection
+    /// actions, and the aloud bar. Shared by EPUB and PDF. Selection explain /
+    /// translate now open in a sheet so long answers never cover正文.
     private var readerOverlay: some View {
         VStack(spacing: 10) {
-            if let marginNote {
-                ZhupiCallout(title: "朱批 · 划词解释") {
-                    Text(marginNote)
-                        .font(.system(size: 12.5))
-                        .lineSpacing(5)
-                        .foregroundStyle(palette.ink2)
-                    Button("继续追问 ↩") {
-                        askCompanion(about: marginSubject ?? marginNote)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(palette.accent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
-                    .overlay(Capsule().strokeBorder(palette.accent, lineWidth: 1))
-                    .padding(.top, 8)
-                }
-                .padding(.horizontal, 18)
-            }
 
             if !thoughtLinks.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -1001,11 +1210,18 @@ struct ReadingView: View {
 
     private enum SelectionAction {
         case explain, translate
+
+        var insightKind: SelectionInsightKind {
+            switch self {
+            case .explain: .explain
+            case .translate: .translate
+            }
+        }
     }
 
     private func handleSelectionChange(_ selection: ReaderSelection?) {
         pendingSelection = selection
-        marginNote = nil
+        selectionInsight = nil
         if let selection {
             Task { await detectThoughtLink(for: selection.text) }
         }
@@ -1018,17 +1234,24 @@ struct ReadingView: View {
             defer { isSelectionWorking = false }
             do {
                 let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
-                let question = action == .explain
-                    ? "Explain this passage to a thoughtful reader. Reply in Chinese with etymology or nuance when helpful."
-                    : "Translate this passage into natural Chinese, preserving literary tone."
+                let kind = action.insightKind
                 let answer = try await resolution.service.answer(
-                    question: question,
-                    groundedIn: [GroundedPassage(id: 0, text: selection.text)]
+                    question: kind.question(for: selection),
+                    groundedIn: [GroundedPassage(id: 0, text: kind.groundedText(for: selection))]
                 )
-                marginNote = answer.text
-                marginSubject = selection.text
+                selectionInsight = .make(
+                    kind: kind,
+                    subject: selection.text,
+                    body: answer.text
+                )
+                pendingSelection = nil
             } catch {
-                marginNote = "出错了:\(error.localizedDescription)"
+                selectionInsight = .make(
+                    kind: action.insightKind,
+                    subject: selection.text,
+                    body: "出错了：\(error.localizedDescription)"
+                )
+                pendingSelection = nil
             }
         }
     }
@@ -1036,8 +1259,10 @@ struct ReadingView: View {
     private func askCompanion(about text: String) {
         guard let onAskCompanion else { return }
         pendingSelection = nil
+        selectionInsight = nil
         onAskCompanion(
-            "关于「\(text.prefix(60))」",
+            CompanionModel.followUpQuestion(about: text),
+            text,
             currentReadingPosition
         )
     }
@@ -1080,6 +1305,7 @@ struct ReadingView: View {
             source: "\(link.currentSource) ⟷ \(link.relatedSource)",
             kind: .link
         )
+        card.setSourcePosition(currentReadingPosition)
         card.book = book
         modelContext.insert(card)
         try? modelContext.save()
@@ -1116,8 +1342,7 @@ struct ReadingView: View {
     private func resetChapterArtifacts() {
         pendingSelection = nil
         showChapterSelection = false
-        marginNote = nil
-        marginSubject = nil
+        selectionInsight = nil
         thoughtLinks = []
         expandedThoughtLinkIDs.removeAll()
         savedThoughtLinkIDs.removeAll()
@@ -1415,6 +1640,7 @@ struct ReadingView: View {
             in: plainText
         )
         currentUTF16Offset = min(offset, plainText.utf16.count)
+        refreshBookmarkState()
         // Position reports only arrive on real scroll/page activity —
         // exactly what the 统计 spec counts as reading time.
         activityMeter.ping()
@@ -1431,13 +1657,22 @@ struct ReadingView: View {
 
                 switch book.format {
                 case .epub:
-                    let parsed = try EPUBParser().parseBook(
+                    // Open the book without pulling every spine item into
+                    // memory: parse metadata and the chapter list, then load
+                    // only the current chapter's XHTML before leaving the
+                    // loading screen.
+                    var parsed = try EPUBParser().parseBook(
                         at: fileURL,
-                        unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
+                        unzipDirectory: fileStore.unzipDirectory(forBookID: book.id),
+                        loadContent: false
                     )
                     guard !parsed.chapters.isEmpty else {
                         throw EPUBParser.ParseError.parsingFailed("No readable chapters found.")
                     }
+                    if currentChapterIndex >= parsed.chapters.count {
+                        currentChapterIndex = 0
+                    }
+                    parsed.loadContent(forChapterAt: currentChapterIndex)
                     epubBook = parsed
                     sectionCount = parsed.chapters.count
                     sectionTitles = parsed.chapters.map(\.title)
@@ -1451,9 +1686,6 @@ struct ReadingView: View {
                     pdfDocumentURL = fileURL
                 }
 
-                if currentChapterIndex >= sectionCount {
-                    currentChapterIndex = 0
-                }
                 if book.format == .pdf {
                     syncPageProgress(at: currentChapterIndex)
                 }
@@ -1474,6 +1706,7 @@ struct ReadingView: View {
         session = newSession
         book.lastOpenedAt = Date()
         refreshChapterHighlights()
+        refreshBookmarkState()
     }
 
     private func saveProgress() {

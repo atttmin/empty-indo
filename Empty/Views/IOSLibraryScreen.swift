@@ -26,7 +26,7 @@ struct IOSLibraryScreen: View {
 
     @State private var isImporterPresented = false
     @State private var isDiagnosticsPresented = false
-    @State private var isSyncPresented = false
+    @State private var isBackupPresented = false
     @State private var isSearching = false
     @State private var showStats = false
     @State private var searchText = ""
@@ -115,8 +115,8 @@ struct IOSLibraryScreen: View {
         .sheet(isPresented: $isDiagnosticsPresented) {
             AIDiagnosticsView()
         }
-        .sheet(isPresented: $isSyncPresented) {
-            SyncSettingsView()
+        .sheet(isPresented: $isBackupPresented) {
+            BackupSettingsView()
         }
         .alert(
             "出了点问题",
@@ -168,9 +168,9 @@ struct IOSLibraryScreen: View {
             }
             .buttonStyle(.plain)
             Button {
-                isSyncPresented = true
+                isBackupPresented = true
             } label: {
-                Image(systemName: "icloud")
+                Image(systemName: "externaldrive")
                     .font(.system(size: 13))
                     .foregroundStyle(palette.ink3)
                     .frame(width: 36, height: 36)

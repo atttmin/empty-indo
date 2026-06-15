@@ -54,7 +54,7 @@ struct AIDiagnosticsView: View {
                     sectionLabel("连通性测试")
                     testCard
 
-                    Text("密钥只存在本机 Keychain,不写入配置文件,也不随 iCloud 同步。")
+                    Text("密钥只存在本机 Keychain，不写入配置文件，也不进备份包。")
                         .font(.system(size: 11))
                         .foregroundStyle(palette.ink3)
                 }

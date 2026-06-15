@@ -47,7 +47,7 @@ nonisolated enum HighlightColor: String, Codable, CaseIterable, Sendable {
 }
 
 /// A reader-created highlight with an optional note, anchored to book text.
-/// Synced store — this is the data a reading app must never lose.
+/// Reader data store — this is the data a reading app must never lose.
 ///
 /// Set `book` after inserting into a context (SwiftData relationships are
 /// only safe to wire between inserted models).

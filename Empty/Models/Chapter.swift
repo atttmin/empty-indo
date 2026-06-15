@@ -10,8 +10,8 @@ import SwiftData
 /// PDF section).
 ///
 /// Local store only: chapter text is derived from the imported file and
-/// always re-extractable, so it never syncs — CloudKit quota, and the source
-/// file doesn't sync either. References its book by `bookID`; cross-store
+/// always re-extractable, so it stays out of the reader-notes backup surface.
+/// References its book by `bookID`; cross-store
 /// relationships don't exist.
 @Model
 final class Chapter {
@@ -116,6 +116,41 @@ extension Chapter {
 
         return parts.joined(separator: "\n\n")
     }
+    static func chapterHeading(
+        forBookID bookID: UUID,
+        chapterIndex: Int,
+        in context: ModelContext
+    ) throws -> String {
+        let descriptor = FetchDescriptor<Chapter>(
+            predicate: #Predicate {
+                $0.bookID == bookID && $0.index == chapterIndex
+            }
+        )
+        if let chapter = try context.fetch(descriptor).first,
+           let title = chapter.title,
+           !title.isEmpty {
+            return title
+        }
+        return "Chapter \(chapterIndex + 1)"
+    }
+
+    static func recentContextExcerpt(
+        forBookID bookID: UUID,
+        before position: ReadingPosition,
+        maxCharacters: Int = 900,
+        in context: ModelContext
+    ) throws -> String? {
+        precondition(maxCharacters > 0, "maxCharacters must be positive")
+        let text = try fullyReadText(
+            forBookID: bookID,
+            before: position,
+            in: context
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if text.count <= maxCharacters { return text }
+        return "…" + String(text.suffix(maxCharacters))
+    }
+
 
     private static func formattedBlock(for chapter: Chapter) -> String? {
         let text = chapter.text.trimmingCharacters(in: .whitespacesAndNewlines)

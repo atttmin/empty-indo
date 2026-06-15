@@ -4,15 +4,15 @@
 //
 //  朱 · AI 伴读 conversation state, shared by the Mac side panel and the
 //  iOS half-screen sheet: a chat over the book, grounded strictly in
-//  already-read passages (the same spoiler-safe retrieval pipeline as
-//  ask-the-book).
+//  already-read context.
 //
-
+//  Conversation state for one reader visit. Held above the panel/sheet so
+//  closing and reopening keeps the thread.
+import Foundation
+import Observation
 import SwiftData
-import SwiftUI
 
-/// Conversation state for one reader visit. Held above the panel/sheet so
-/// closing and reopening keeps the thread.
+
 @MainActor
 @Observable
 final class CompanionModel {
@@ -25,15 +25,31 @@ final class CompanionModel {
         let id = UUID()
         var role: Role
         var text: String
-        /// Citation chip, e.g. a chapter title — only on grounded answers.
+        /// Citation chip, narrowed to the concrete hit when possible.
         var source: String?
+        /// Short quoted line rendered above the answer body.
+        var citation: String?
+        /// Optional exact selection the reader is asking about right now.
+        var focusText: String?
         /// The user question this AI answer responded to; enables 存为卡片.
         var question: String?
+        /// How to read the answer: direct evidence or a synthesis over evidence.
+        var analysisSummary: String?
+        /// Evidence blocks worth showing under the answer.
+        var evidenceBlocks: [CompanionEvidenceBlock] = []
         /// 朱批 agent trace ("查已读「…」 → 生成闪卡(待确认)").
         var steps: [String] = []
         /// Confirm-gated writes the agent proposed with this answer.
         var actions: [CompanionAction] = []
     }
+    struct EvidenceSection: Identifiable, Equatable {
+        var scope: CompanionEvidenceScope
+        var title: String
+        var blocks: [CompanionEvidenceBlock]
+
+        var id: String { scope.rawValue }
+    }
+
 
     var messages: [Message] = [
         Message(
@@ -43,8 +59,18 @@ final class CompanionModel {
     ]
     var thinking = false
     var draft = ""
+    var draftFocusText: String?
     private var lastThemeProposalSignature: String?
+    typealias ServiceResolution = (service: any AIService, provider: AIProvider, fellBack: Bool)
+    private let resolveUsableService: @MainActor (AIFeature) -> ServiceResolution
 
+    init(
+        resolveUsableService: @escaping @MainActor (AIFeature) -> ServiceResolution = {
+            AIProviderRegistry.load().resolveUsableService(feature: $0)
+        }
+    ) {
+        self.resolveUsableService = resolveUsableService
+    }
 
     var canProposeTheme: Bool {
         guard !thinking,
@@ -59,7 +85,9 @@ final class CompanionModel {
     ) {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !thinking else { return }
+        let focusText = draftFocusText?.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = ""
+        draftFocusText = nil
         messages.append(Message(role: .user, text: question))
         thinking = true
 
@@ -87,7 +115,7 @@ final class CompanionModel {
                     return
                 }
 
-                let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
+                let resolution = resolveUsableService(.chat)
                 // 朱的回答 follows the目标语言 unless 作用范围 fixes it —
                 // declared on the question itself so both the agent path
                 // and the RAG fallback inherit it.
@@ -95,6 +123,12 @@ final class CompanionModel {
                     for: LanguageSettings.effective(for: book.id).resolvedChatTarget()
                 )
                 let directedQuestion = "\(question)\n\n(Respond in \(answerLanguage).)"
+                let transcriptPrelude = try Self.transcriptPrelude(
+                    for: book,
+                    position: position,
+                    focusText: focusText,
+                    modelContext: modelContext
+                )
                 // Agent first: the model decides which reading tools to
                 // use. Any failure falls back to plain grounded RAG so the
                 // companion never dead-ends.
@@ -110,11 +144,32 @@ final class CompanionModel {
                         service: resolution.service,
                         maxSteps: resolution.provider.isLocal ? 3 : 4
                     )
-                    let reply = try await agent.run(question: directedQuestion)
+                    let reply = try await agent.run(
+                        question: directedQuestion,
+                        transcriptPrelude: transcriptPrelude
+                    )
+                    let fallbackSource = try? Self.contextLabel(for: book, position: position, modelContext: modelContext)
+                    let source = Self.preferredSourceLabel(
+                        from: reply.evidenceBlocks,
+                        fallback: fallbackSource
+                    )
+                    let citation = Self.citationPreview(
+                        from: reply.evidenceBlocks,
+                        focusText: focusText
+                    )
                     messages.append(Message(
                         role: .ai,
                         text: reply.text,
+                        source: source,
+                        citation: citation,
+                        focusText: focusText,
                         question: question,
+                        analysisSummary: Self.analysisSummary(
+                            source: source,
+                            steps: reply.steps,
+                            evidenceBlocks: reply.evidenceBlocks
+                        ),
+                        evidenceBlocks: reply.evidenceBlocks,
                         steps: reply.steps,
                         actions: reply.actions
                     ))
@@ -127,6 +182,7 @@ final class CompanionModel {
                         answerLanguage: answerLanguage,
                         book: book,
                         position: position,
+                        focusText: focusText,
                         modelContext: modelContext,
                         service: resolution.service
                     )
@@ -238,6 +294,43 @@ final class CompanionModel {
         )
         return !readText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    static func followUpQuestion(about text: String, maxCharacters: Int = 240) -> String {
+        let normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !normalized.isEmpty else { return "关于这段原文" }
+        if normalized.count <= maxCharacters {
+            return "关于这段原文：「\(normalized)」"
+        }
+        return "关于这段原文：「\(String(normalized.prefix(maxCharacters)))…」"
+    }
+
+    static func transcriptPrelude(
+        for book: Book,
+        position: ReadingPosition,
+        focusText: String? = nil,
+        modelContext: ModelContext
+    ) throws -> String? {
+        guard let excerpt = try Chapter.recentContextExcerpt(
+            forBookID: book.id,
+            before: position,
+            maxCharacters: 900,
+            in: modelContext
+        ) else { return nil }
+        let heading = try Chapter.chapterHeading(
+            forBookID: book.id,
+            chapterIndex: position.chapterIndex,
+            in: modelContext
+        )
+        let focusBlock = focusText.map { "读者此刻想追问的原文:\n\($0)\n\n" } ?? ""
+        return """
+        当前书: 《\(book.title)》
+        当前读到: \(heading)
+        \(focusBlock)刚读过的上下文（只到当前进度）:
+        \(excerpt)
+        """
+    }
 
     static func themeProposalSignature(
         from messages: [Message],
@@ -336,6 +429,7 @@ final class CompanionModel {
         answerLanguage: String? = nil,
         book: Book,
         position: ReadingPosition,
+        focusText: String? = nil,
         modelContext: ModelContext,
         service: any AIService
     ) async throws {
@@ -359,11 +453,25 @@ final class CompanionModel {
         let citedChunk = answer.citedPassageIDs
             .compactMap { id in chunks.first { $0.ordinal == id } }
             .first ?? chunks.first
+        let sourceLabel = if let citedChunk {
+            Self.sourceLabel(for: citedChunk, bookTitle: book.title)
+        } else {
+            try? Self.contextLabel(for: book, position: position, modelContext: modelContext)
+        }
+        let evidenceBlocks = Self.passageEvidenceBlocks(
+            from: chunks,
+            bookTitle: book.title,
+            emphasisTerms: Self.queryTerms(for: question)
+        )
         messages.append(Message(
             role: .ai,
             text: answer.text,
-            source: citedChunk.flatMap(Self.sourceTitle(for:)),
-            question: question
+            source: sourceLabel,
+            citation: Self.citationPreview(from: evidenceBlocks, focusText: focusText),
+            focusText: focusText,
+            question: question,
+            analysisSummary: Self.analysisSummary(source: sourceLabel, steps: [], evidenceBlocks: evidenceBlocks),
+            evidenceBlocks: evidenceBlocks
         ))
         await maybeAutoProposeTheme(for: book, service: service)
     }
@@ -386,7 +494,7 @@ final class CompanionModel {
 
         Task {
             do {
-                let resolution = AIProviderRegistry.load().resolveUsableService(feature: .chat)
+                let resolution = resolveUsableService(.chat)
                 let toolbox = ReadingToolbox(
                     book: book,
                     position: position,
@@ -414,5 +522,229 @@ final class CompanionModel {
             return title
         }
         return "第 \(chunk.chapterIndex + 1) 章"
+    }
+
+    private static func sourceLabel(for chunk: Chunk, bookTitle: String) -> String {
+        "《\(bookTitle)》 · \(sourceTitle(for: chunk)) · ¶\(chunk.ordinal + 1)"
+    }
+
+    static func analysisSummary(
+        source: String?,
+        steps: [String],
+        evidenceBlocks: [CompanionEvidenceBlock]
+    ) -> String? {
+        if steps.contains("⚲ 引用了记忆") {
+            return "朱批推断 · 基于本书证据并引用过记忆"
+        }
+        let currentBook = evidenceBlocks.filter { $0.scope == .currentBook }
+        let crossBook = evidenceBlocks.filter { $0.scope == .crossBook }
+        if !currentBook.isEmpty,
+           crossBook.isEmpty,
+           currentBook.allSatisfy({ $0.kind == .passage }) {
+            return "直接证据 · 当前段落"
+        }
+        if !crossBook.isEmpty {
+            return "朱批推断 · 结合本书证据与跨书回声"
+        }
+        if !currentBook.isEmpty {
+            return "朱批推断 · 基于本书证据"
+        }
+        if source != nil {
+            return "直接证据 · 已读原文"
+        }
+        return nil
+    }
+
+    static func passageEvidenceBlocks(
+        from chunks: [Chunk],
+        bookTitle: String,
+        emphasisTerms: [String] = []
+    ) -> [CompanionEvidenceBlock] {
+        chunks.prefix(2).map { chunk in
+            CompanionEvidenceBlock(
+                kind: .passage,
+                title: sourceLabel(for: chunk, bookTitle: bookTitle),
+                body: String(chunk.text.prefix(320)),
+                emphasisTerms: emphasisTerms
+            )
+        }
+    }
+
+    static func preferredSourceLabel(
+        from blocks: [CompanionEvidenceBlock],
+        fallback: String?
+    ) -> String? {
+        blocks.first(where: { $0.scope == .currentBook })?.title ?? fallback
+    }
+
+    static func citationPreview(
+        from blocks: [CompanionEvidenceBlock],
+        focusText: String? = nil
+    ) -> String? {
+        if let focusText {
+            let trimmed = focusText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return String(trimmed.prefix(88))
+            }
+        }
+        guard let block = blocks.first(where: { $0.scope == .currentBook }) ?? blocks.first else {
+            return nil
+        }
+        let raw = citationBody(for: block)
+        guard !raw.isEmpty else { return nil }
+        return excerptPreview(from: raw, matching: block.emphasisTerms, limit: 88)
+    }
+
+    static func evidenceSections(from blocks: [CompanionEvidenceBlock]) -> [EvidenceSection] {
+        let currentBook = blocks.filter { $0.scope == .currentBook }
+        let crossBook = blocks.filter { $0.scope == .crossBook }
+        var sections = [EvidenceSection]()
+        if !currentBook.isEmpty {
+            sections.append(EvidenceSection(
+                scope: .currentBook,
+                title: evidenceSectionTitle(for: .currentBook, blocks: currentBook),
+                blocks: currentBook
+            ))
+        }
+        if !crossBook.isEmpty {
+            sections.append(EvidenceSection(
+                scope: .crossBook,
+                title: evidenceSectionTitle(for: .crossBook, blocks: crossBook),
+                blocks: crossBook
+            ))
+        }
+        return sections
+    }
+
+    static func emphasisRanges(
+        in text: String,
+        matching rawTerms: [String]
+    ) -> [Range<String.Index>] {
+        guard !text.isEmpty else { return [] }
+        let terms = rawTerms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted { $0.count > $1.count }
+        guard !terms.isEmpty else { return [] }
+        var ranges = [Range<String.Index>]()
+        for term in terms {
+            var cursor = text.startIndex
+            while cursor < text.endIndex,
+                  let range = text.range(
+                    of: term,
+                    options: [.caseInsensitive, .diacriticInsensitive],
+                    range: cursor..<text.endIndex,
+                    locale: .current
+                  ) {
+                ranges.append(range)
+                cursor = range.upperBound
+            }
+        }
+        guard let first = ranges.sorted(by: { $0.lowerBound < $1.lowerBound }).first else { return [] }
+        var merged = [first]
+        for range in ranges.sorted(by: { $0.lowerBound < $1.lowerBound }).dropFirst() {
+            let lastIndex = merged.index(before: merged.endIndex)
+            if range.lowerBound <= merged[lastIndex].upperBound {
+                merged[lastIndex] = merged[lastIndex].lowerBound..<max(merged[lastIndex].upperBound, range.upperBound)
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
+    }
+
+    static func queryTerms(for query: String) -> [String] {
+        let tokens = query
+            .split {
+                $0.isWhitespace
+                    || "，。、！？；：,.!?;:()[]{}<>“”‘’'\"/\\|".contains($0)
+            }
+            .map(String.init)
+        let candidates = tokens.filter { $0.count >= 2 }
+        let seeds = candidates.isEmpty
+            ? [query.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+            : candidates
+        var seen = Set<String>()
+        var unique = [String]()
+        for term in seeds {
+            let normalized = term.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            guard seen.insert(normalized).inserted else { continue }
+            unique.append(term)
+        }
+        return unique
+    }
+
+    private static func citationBody(for block: CompanionEvidenceBlock) -> String {
+        if let quoted = quotedSource(in: block.body) {
+            return quoted
+        }
+        if let range = block.body.range(of: "原文: ") {
+            return String(block.body[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let range = block.body.range(of: "记忆: ") {
+            return String(block.body[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return block.body.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func quotedSource(in text: String) -> String? {
+        guard let start = text.range(of: "「"),
+              let end = text.range(of: "」", range: start.upperBound..<text.endIndex) else {
+            return nil
+        }
+        return String(text[start.upperBound..<end.lowerBound])
+    }
+
+    private static func excerptPreview(
+        from text: String,
+        matching terms: [String],
+        limit: Int
+    ) -> String {
+        let trimmed = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        for term in terms {
+            guard let range = trimmed.range(
+                of: term,
+                options: [.caseInsensitive, .diacriticInsensitive]
+            ) else { continue }
+            let utf16 = Array(trimmed.utf16)
+            let lower = max(0, range.lowerBound.utf16Offset(in: trimmed) - 28)
+            let upper = min(utf16.count, range.upperBound.utf16Offset(in: trimmed) + 44)
+            let snippet = String(decoding: utf16[lower..<upper], as: UTF16.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let prefix = lower > 0 ? "…" : ""
+            let suffix = upper < utf16.count ? "…" : ""
+            return prefix + snippet + suffix
+        }
+        return String(trimmed.prefix(limit - 1)) + "…"
+    }
+
+    private static func evidenceSectionTitle(
+        for scope: CompanionEvidenceScope,
+        blocks: [CompanionEvidenceBlock]
+    ) -> String {
+        switch scope {
+        case .currentBook:
+            return blocks.allSatisfy { $0.kind == .passage }
+                ? "当前已读原文"
+                : "本书证据"
+        case .crossBook:
+            return "跨书回声"
+        }
+    }
+
+    private static func contextLabel(
+        for book: Book,
+        position: ReadingPosition,
+        modelContext: ModelContext
+    ) throws -> String {
+        let heading = try Chapter.chapterHeading(
+            forBookID: book.id,
+            chapterIndex: position.chapterIndex,
+            in: modelContext
+        )
+        return "《\(book.title)》 · \(heading)"
     }
 }

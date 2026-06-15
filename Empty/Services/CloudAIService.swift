@@ -389,7 +389,7 @@ private enum CloudPrompts {
         {"action": "call", "tool": "<tool name>", "argument": "<single text argument>"}
         {"action": "finish", "answer": "<your reply to the reader, in their language>"}
 
-        Call a tool only when its result is needed. When you have enough, finish.
+        Call a tool only when its result is needed. The transcript may already include a 当前读到 / 刚读过的上下文 block from the local reader; if that is enough, finish.
         """
     }
 }

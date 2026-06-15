@@ -71,9 +71,12 @@ struct Library {
         guard let relativePath = book.fileRelativePath else { return }
         let parsed: EPUBBook
         do {
+            // Import is the one path that needs every chapter's plain text
+            // for the AI layer, so we load all spine content here.
             parsed = try EPUBParser().parseBook(
                 at: fileStore.url(forRelativePath: relativePath),
-                unzipDirectory: fileStore.unzipDirectory(forBookID: book.id)
+                unzipDirectory: fileStore.unzipDirectory(forBookID: book.id),
+                loadContent: true
             )
         } catch {
             return
@@ -172,7 +175,7 @@ struct Library {
         return parsed.pages.map(\.title)
     }
 
-    /// Deletes a book everywhere it exists: the synced record (highlights
+    /// Deletes a book everywhere it exists: the reader-data record (highlights
     /// and sessions cascade with it), local derived data (chapters cascade
     /// their chunks; stray chunks and cached translations swept by
     /// `bookID`), and the imported files, unzipped archive included.

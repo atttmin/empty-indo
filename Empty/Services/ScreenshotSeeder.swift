@@ -23,6 +23,9 @@ enum ScreenshotSeeder {
         if args.contains("-ScreenshotSeedHighlight") {
             try seedDemoHighlightIfNeeded(book: book, modelContext: modelContext)
         }
+        if args.contains("-ScreenshotSeedBookmark") {
+            try seedDemoBookmarkIfNeeded(book: book, modelContext: modelContext)
+        }
         return book
     }
 
@@ -60,6 +63,25 @@ enum ScreenshotSeeder {
             selection: "深读始于空白"
         )
         try store.updateNote(highlight, note: "第一条测试批注。")
+    }
+
+    @MainActor
+    private static func seedDemoBookmarkIfNeeded(
+        book: Book,
+        modelContext: ModelContext
+    ) throws {
+        let existing = try BookmarkStore(modelContext: modelContext).bookmarks(for: book)
+        guard !existing.contains(where: { $0.chapterIndex == 0 && $0.utf16Offset < 600 }) else {
+            return
+        }
+        let bookmark = Bookmark(
+            chapterIndex: 0,
+            utf16Offset: 0,
+            snippet: "深读始于空白。导入一本书，朱批落在页边。"
+        )
+        modelContext.insert(bookmark)
+        bookmark.book = book
+        try modelContext.save()
     }
 }
 

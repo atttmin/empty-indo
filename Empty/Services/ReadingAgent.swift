@@ -15,6 +15,8 @@ nonisolated struct ReadingAgentReply: Sendable {
     var text: String
     /// 朱批 trace fragments, in order ("查已读「…」", "生成闪卡(待确认)").
     var steps: [String]
+    /// Evidence blocks gathered from tool calls.
+    var evidenceBlocks: [CompanionEvidenceBlock]
     /// Confirm-gated writes proposed along the way.
     var actions: [CompanionAction]
 }
@@ -30,9 +32,11 @@ struct ReadingAgent {
     /// verbose tool can't blow the context window.
     private static let observationBudget = 900
 
-    func run(question: String) async throws -> ReadingAgentReply {
-        var transcript = "读者:\(question)\n"
+    func run(question: String, transcriptPrelude: String? = nil) async throws -> ReadingAgentReply {
+        var transcript = transcriptPrelude.map { "\($0)\n\n" } ?? ""
+        transcript += "读者:\(question)\n"
         var steps: [String] = []
+        var evidenceBlocks: [CompanionEvidenceBlock] = []
         var actions: [CompanionAction] = []
 
         for stepIndex in 0..<maxSteps {
@@ -47,7 +51,7 @@ struct ReadingAgent {
 
             switch step {
             case .finish(let answer):
-                return ReadingAgentReply(text: answer, steps: steps, actions: actions)
+                return ReadingAgentReply(text: answer, steps: steps, evidenceBlocks: evidenceBlocks, actions: actions)
             case .call(let tool, let argument):
                 guard !isLastStep else {
                     // Model tried to keep digging past the budget — answer
@@ -63,6 +67,7 @@ struct ReadingAgent {
                 if let action = result.proposedAction {
                     actions.append(action)
                 }
+                evidenceBlocks.append(contentsOf: result.evidenceBlocks)
                 transcript += """
                 工具 \(tool)(\(argument.prefix(80))):
                 \(String(result.observation.prefix(Self.observationBudget)))
@@ -77,6 +82,6 @@ struct ReadingAgent {
             question: question,
             groundedIn: [GroundedPassage(id: 0, text: String(transcript.suffix(3_000)))]
         )
-        return ReadingAgentReply(text: answer.text, steps: steps, actions: actions)
+        return ReadingAgentReply(text: answer.text, steps: steps, evidenceBlocks: evidenceBlocks, actions: actions)
     }
 }

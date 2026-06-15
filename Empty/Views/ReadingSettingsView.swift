@@ -11,6 +11,11 @@ struct ReadingSettingsView: View {
     @Binding var lineSpacing: Double
     @Binding var theme: ReaderTheme
     @Binding var font: ReaderFont
+    @Binding var contentWidth: ReaderContentWidth
+    @Binding var firstLineIndent: ReaderFirstLineIndent
+    @Binding var paragraphSpacing: ReaderParagraphSpacingStyle
+    @Binding var textAlignment: ReaderTextAlignmentStyle
+    @Binding var chapterOpening: ReaderChapterOpeningStyle
     var pageTurn: Binding<ReaderPageTurn>? = nil
     /// When set, the panel offers 本书覆盖 — a per-book目标语言 kept on
     /// the book dimension (the global default lives in AI 状态 → 语言).
@@ -27,6 +32,18 @@ struct ReadingSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.emptyPalette) private var palette
 
+    private var previewAppearance: ReaderAppearance {
+        ReaderAppearance(
+            theme: theme,
+            font: font,
+            contentWidth: contentWidth,
+            firstLineIndent: firstLineIndent,
+            paragraphSpacing: paragraphSpacing,
+            textAlignment: textAlignment,
+            chapterOpening: chapterOpening
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -34,9 +51,11 @@ struct ReadingSettingsView: View {
                     Text("阅读设置")
                         .font(.system(size: 17, weight: .black, design: .serif))
                         .foregroundStyle(palette.ink)
-                    Text("字号 \(Int(fontSize)) · 行距 \(lineSpacing, specifier: "%.1f")")
-                        .font(.system(size: 11))
-                        .foregroundStyle(palette.ink3)
+                    Text(
+                        "字号 \(Int(fontSize)) · 行距 \(lineSpacing, specifier: "%.1f") · \(contentWidth.title)版心"
+                    )
+                    .font(.system(size: 11))
+                    .foregroundStyle(palette.ink3)
                 }
                 Spacer()
                 Button {
@@ -54,6 +73,16 @@ struct ReadingSettingsView: View {
             Rectangle().fill(palette.line).frame(height: 1)
 
             VStack(alignment: .leading, spacing: 16) {
+                settingRow(label: "纸页预设") {
+                    HStack(spacing: 8) {
+                        selectionChip("纸页模式", isActive: previewAppearance == .paperPreset) {
+                            applyPaperPreset()
+                        }
+                        secondaryChip("恢复默认") {
+                            restoreDefaults()
+                        }
+                    }
+                }
                 settingRow(label: "字号") {
                     HStack(spacing: 12) {
                         Text("A").font(.system(size: 11, design: .serif))
@@ -73,9 +102,11 @@ struct ReadingSettingsView: View {
                     .foregroundStyle(palette.ink2)
                 }
                 settingRow(label: "字体") {
-                    HStack(spacing: 8) {
+                    optionScroll {
                         ForEach(ReaderFont.allCases, id: \.self) { choice in
-                            fontChip(choice)
+                            selectionChip(choice.title, isActive: font == choice) {
+                                font = choice
+                            }
                         }
                     }
                 }
@@ -83,6 +114,51 @@ struct ReadingSettingsView: View {
                     HStack(spacing: 10) {
                         ForEach(ReaderTheme.allCases, id: \.self) { choice in
                             themeSwatch(choice)
+                        }
+                    }
+                }
+                settingRow(label: "版心") {
+                    optionScroll {
+                        ForEach(ReaderContentWidth.allCases, id: \.self) { choice in
+                            selectionChip(choice.title, isActive: contentWidth == choice) {
+                                contentWidth = choice
+                            }
+                        }
+                    }
+                }
+                settingRow(label: "首行") {
+                    optionScroll {
+                        ForEach(ReaderFirstLineIndent.allCases, id: \.self) { choice in
+                            selectionChip(choice.title, isActive: firstLineIndent == choice) {
+                                firstLineIndent = choice
+                            }
+                        }
+                    }
+                }
+                settingRow(label: "段落") {
+                    optionScroll {
+                        ForEach(ReaderParagraphSpacingStyle.allCases, id: \.self) { choice in
+                            selectionChip(choice.title, isActive: paragraphSpacing == choice) {
+                                paragraphSpacing = choice
+                            }
+                        }
+                    }
+                }
+                settingRow(label: "对齐") {
+                    optionScroll {
+                        ForEach(ReaderTextAlignmentStyle.allCases, id: \.self) { choice in
+                            selectionChip(choice.title, isActive: textAlignment == choice) {
+                                textAlignment = choice
+                            }
+                        }
+                    }
+                }
+                settingRow(label: "章首") {
+                    optionScroll {
+                        ForEach(ReaderChapterOpeningStyle.allCases, id: \.self) { choice in
+                            selectionChip(choice.title, isActive: chapterOpening == choice) {
+                                chapterOpening = choice
+                            }
                         }
                     }
                 }
@@ -98,7 +174,7 @@ struct ReadingSettingsView: View {
                     }
                 }
                 settingRow(label: "繁简 · PDF") {
-                    HStack(spacing: 8) {
+                    optionScroll {
                         optionChip("繁体显示", isOn: $traditionalChinese)
                         optionChip("PDF 夜间反色", isOn: $pdfInvert)
                         #if os(macOS)
@@ -113,12 +189,10 @@ struct ReadingSettingsView: View {
                 if bookID != nil {
                     settingRow(label: "本书语言") {
                         VStack(alignment: .leading, spacing: 6) {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    bookLanguageChip("跟随全局", target: nil)
-                                    ForEach(LanguageSettings.targetOptions, id: \.id) { option in
-                                        bookLanguageChip(option.native, target: option.id)
-                                    }
+                            optionScroll {
+                                bookLanguageChip("跟随全局", target: nil)
+                                ForEach(LanguageSettings.targetOptions, id: \.id) { option in
+                                    bookLanguageChip(option.native, target: option.id)
                                 }
                             }
                             Text("只改这一本的目标语言；全局默认在 AI 状态 → 语言。")
@@ -127,13 +201,7 @@ struct ReadingSettingsView: View {
                         }
                     }
                 }
-                Text("\u{201C}I went to the woods because I wished to live deliberately…\u{201D}")
-                    .font(.system(size: fontSize * 0.8, design: .serif))
-                    .lineSpacing(fontSize * 0.8 * (lineSpacing - 1))
-                    .foregroundStyle(palette.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .emptyCard(palette, radius: 12)
+                previewCard
             }
             .padding(EdgeInsets(top: 16, leading: 20, bottom: 20, trailing: 20))
 
@@ -149,6 +217,95 @@ struct ReadingSettingsView: View {
                 bookTargetOverride = LanguageSettings.bookOverride(for: bookID)?.target
             }
         }
+    }
+
+    private var previewCard: some View {
+        let sampleSize = fontSize * 0.82
+        let sampleSpacing = previewAppearance.blockPadding(fontSize: sampleSize)
+        let pageFill = previewAppearance.theme.pageFill(baseIsDark: palette.isDark)
+        let pageRule = previewAppearance.theme.pageRule(baseIsDark: palette.isDark)
+        return settingRow(label: "预览") {
+            VStack(alignment: .leading, spacing: sampleSpacing) {
+                Text("第一章 · 森林")
+                    .font(previewFont(size: sampleSize + 4, bold: true))
+                    .foregroundStyle(palette.ink)
+                Text(previewParagraph(
+                    "我走进树林，是因为我想有意识地生活，只面对生活的基本事实。",
+                    opening: true
+                ))
+                .font(previewFont(size: sampleSize))
+                .lineSpacing(sampleSize * max(0.2, lineSpacing - 1))
+                .foregroundStyle(palette.ink)
+                Text(previewParagraph(
+                    "纸页模式收紧了版心、补上了首行缩进，也让章节开头更像一本书，而不是一块会滚动的屏幕。",
+                    opening: false
+                ))
+                .font(previewFont(size: sampleSize))
+                .lineSpacing(sampleSize * max(0.2, lineSpacing - 1))
+                .foregroundStyle(palette.ink2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(pageFill, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(pageRule, lineWidth: 1)
+            )
+        }
+    }
+
+    private func previewParagraph(_ text: String, opening: Bool) -> String {
+        if opening, chapterOpening != .plain {
+            return text
+        }
+        let prefix: String
+        switch firstLineIndent {
+        case .none:
+            prefix = ""
+        case .modest:
+            prefix = "　"
+        case .classic:
+            prefix = "　　"
+        }
+        return prefix + text
+    }
+
+    private func previewFont(size: Double, bold: Bool = false) -> Font {
+        let resolved = previewAppearance.openingFontSize(base: size, isOpeningParagraph: bold)
+        if let family = font.familyName {
+            return .custom(family, size: resolved).weight(bold ? .bold : .regular)
+        }
+        let weight: Font.Weight = bold ? .bold : .regular
+        if font.usesSerifDesign {
+            return .system(size: resolved, weight: weight, design: .serif)
+        }
+        return .system(size: resolved, weight: weight, design: .default)
+    }
+
+    private func applyPaperPreset() {
+        let preset = ReaderAppearance.paperPreset
+        theme = preset.theme
+        font = preset.font
+        contentWidth = preset.contentWidth
+        firstLineIndent = preset.firstLineIndent
+        paragraphSpacing = preset.paragraphSpacing
+        textAlignment = preset.textAlignment
+        chapterOpening = preset.chapterOpening
+        fontSize = 19
+        lineSpacing = 1.75
+        pageTurn?.wrappedValue = .paged
+    }
+
+    private func restoreDefaults() {
+        theme = .paper
+        font = .serif
+        contentWidth = .medium
+        firstLineIndent = .none
+        paragraphSpacing = .book
+        textAlignment = .leading
+        chapterOpening = .plain
+        fontSize = 18
+        lineSpacing = 1.6
     }
 
     private func bookLanguageChip(_ title: String, target: String?) -> some View {
@@ -188,27 +345,44 @@ struct ReadingSettingsView: View {
         .buttonStyle(.plain)
     }
 
-    private func fontChip(_ choice: ReaderFont) -> some View {
-        Button {
-            font = choice
-        } label: {
-            Text(choice.title)
-                .font(.system(size: 12.5, weight: font == choice ? .bold : .regular))
-                .foregroundStyle(font == choice ? palette.onAccent : palette.ink2)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 7)
-                .background(
-                    font == choice ? palette.accent : palette.side,
-                    in: Capsule()
-                )
+    private func selectionChip(_ title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11.5, weight: isActive ? .bold : .regular))
+                .foregroundStyle(isActive ? palette.onAccent : palette.ink2)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isActive ? palette.accent : palette.side, in: Capsule())
                 .overlay(
                     Capsule().strokeBorder(
-                        font == choice ? palette.accent : palette.line2,
+                        isActive ? palette.accent : palette.line2,
                         lineWidth: 1
                     )
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    private func secondaryChip(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11.5))
+                .foregroundStyle(palette.ink2)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(palette.side, in: Capsule())
+                .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func optionScroll<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                content()
+            }
+        }
     }
 
     private func themeSwatch(_ choice: ReaderTheme) -> some View {

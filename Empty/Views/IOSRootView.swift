@@ -112,8 +112,8 @@ struct IOSRootView: View {
                 ReadingView(
                     book: book,
                     onExit: { tab = .library },
-                    onAskCompanion: { question, position in
-                        askCompanion(question, position: position)
+                    onAskCompanion: { question, focusText, position in
+                        askCompanion(question, focusText: focusText, position: position)
                     },
                     onControlsChange: { readerControlsVisible = $0 }
                 )
@@ -122,7 +122,7 @@ struct IOSRootView: View {
                 readerEmptyState
             }
         case .cards:
-            IOSCardsScreen()
+            IOSCardsScreen(onOpenPosition: open(_:at:))
         }
     }
 
@@ -200,11 +200,18 @@ struct IOSRootView: View {
         tab = .reader
     }
 
+    private func open(_ book: Book, at position: ReadingPosition) {
+        book.position = position
+        try? modelContext.save()
+        open(book)
+    }
+
     /// 追问 from the reader: opens the sheet and sends right away, using
     /// the reader's live position so answers stay spoiler-safe.
-    private func askCompanion(_ question: String, position: ReadingPosition) {
+    private func askCompanion(_ question: String, focusText: String?, position: ReadingPosition) {
         companionPosition = position
         companion.draft = question
+        companion.draftFocusText = focusText
         showCompanion = true
     }
 }

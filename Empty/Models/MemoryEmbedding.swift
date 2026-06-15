@@ -6,8 +6,8 @@
 import Foundation
 import SwiftData
 
-/// Local-only sentence embedding for a synced `MemoryItem`. Cross-store by
-/// `itemID` only: the vector is re-derivable and never leaves the device.
+/// Local-only sentence embedding for a `MemoryItem`. Cross-store by `itemID`
+/// only: the vector is re-derivable and never leaves the device.
 @Model
 final class MemoryEmbedding {
     #Index<MemoryEmbedding>([\.itemID])

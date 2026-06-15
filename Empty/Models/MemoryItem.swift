@@ -4,7 +4,7 @@
 //
 //  ReaderMemory entries (docs/READER-MEMORY-PLAN.md §3.1): summaries
 //  derived from reader behaviour — highlights with notes, link cards,
-//  saved Q&A. Synced store; bodies are short summaries and must never
+//  saved Q&A. Reader data store; bodies are short summaries and must never
 //  contain unread-chapter text (the ingest sources are read-only-by-
 //  construction: highlights and cards only exist on read text).
 //
@@ -47,7 +47,7 @@ final class MemoryItem {
     var chapterIndex: Int?
     /// "Walden · 第 2 章" — provenance shown with citations.
     var sourceLabel: String?
-    /// Comma-joined topic tags (CloudKit-friendly scalar).
+    /// Comma-joined topic tags stored as a plain scalar for export.
     var tagsRawValue: String = ""
     /// Highlight.id / StudyCardEntry.id the item derives from.
     var sourceRefID: UUID?

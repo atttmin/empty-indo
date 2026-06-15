@@ -315,7 +315,7 @@ private enum Prompts {
         \(transcript)
 
         Decide ONE next step: call a tool only when its result is needed; \
-        when you have enough, finish with a reply in the reader's language.
+        the transcript may already include a 当前读到 / 刚读过的上下文 block from the local reader. If that is enough, finish with a reply in the reader's language.
         """
     }
 }

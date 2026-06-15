@@ -22,13 +22,21 @@ final class EPUBParser {
         }
     }
 
-    /// Unzips (first time only) and fully parses an imported EPUB.
+    /// Unzips (first time only) and parses an imported EPUB.
     ///
     /// - Parameters:
     ///   - fileURL: the stored `.epub` file (see `BookFileStore`).
     ///   - unzipDirectory: working directory for the extracted archive;
     ///     created on first parse, reused afterwards.
-    func parseBook(at fileURL: URL, unzipDirectory: URL) throws -> EPUBBook {
+    ///   - loadContent: when `true`, every spine item's XHTML is read into
+    ///     memory (used during import to extract plain text for the AI layer).
+    ///     When `false` (the default for opening a book), only metadata and
+    ///     the spine list are loaded; chapter XHTML is pulled on demand.
+    func parseBook(
+        at fileURL: URL,
+        unzipDirectory: URL,
+        loadContent: Bool = false
+    ) throws -> EPUBBook {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: fileURL.path) else {
             throw ParseError.fileNotFound
@@ -37,15 +45,17 @@ final class EPUBParser {
             try unzipEPUB(at: fileURL, to: unzipDirectory)
         }
 
-        let metadata = try parseMetadata(from: unzipDirectory)
+        let opfURL = try parseOPFURL(from: unzipDirectory)
+        let metadata = try parseMetadata(opfURL: opfURL)
         let coverData = extractCoverImage(from: unzipDirectory, metadata: metadata)
-        let chapters = try parseChapters(from: unzipDirectory)
+        let chapters = try parseChapters(opfURL: opfURL, loadContent: loadContent)
 
         return EPUBBook(
             metadata: metadata,
             chapters: chapters,
             coverImageData: coverData,
-            basePath: unzipDirectory
+            basePath: unzipDirectory,
+            opfDirectory: opfURL.deletingLastPathComponent()
         )
     }
 
@@ -164,8 +174,7 @@ final class EPUBParser {
         return Data(bytes: destinationBuffer, count: decompressedSize)
     }
 
-    private func parseMetadata(from bookDir: URL) throws -> EPUBMetadata {
-        // 1. Read META-INF/container.xml to find the OPF file path
+    private func parseOPFURL(from bookDir: URL) throws -> URL {
         let containerURL = bookDir.appendingPathComponent("META-INF/container.xml")
         guard FileManager.default.fileExists(atPath: containerURL.path) else {
             throw ParseError.containerNotFound
@@ -179,8 +188,10 @@ final class EPUBParser {
             throw ParseError.opfNotFound
         }
 
-        // 2. Parse the OPF file
-        let opfURL = bookDir.appendingPathComponent(opfPath)
+        return bookDir.appendingPathComponent(opfPath)
+    }
+
+    private func parseMetadata(opfURL: URL) throws -> EPUBMetadata {
         let opfData = try Data(contentsOf: opfURL)
         let opfParser = OPFParser()
         opfParser.parse(data: opfData)
@@ -218,17 +229,10 @@ final class EPUBParser {
         return nil
     }
 
-    private func parseChapters(from bookDir: URL) throws -> [EPUBChapter] {
-        let containerURL = bookDir.appendingPathComponent("META-INF/container.xml")
-        let containerData = try Data(contentsOf: containerURL)
-        let containerParser = SimpleXMLParser()
-        containerParser.parse(data: containerData)
-
-        guard let opfPath = containerParser.rootfilePath else {
-            throw ParseError.opfNotFound
-        }
-
-        let opfURL = bookDir.appendingPathComponent(opfPath)
+    private func parseChapters(
+        opfURL: URL,
+        loadContent: Bool
+    ) throws -> [EPUBChapter] {
         let opfData = try Data(contentsOf: opfURL)
         let opfParser = OPFParser()
         opfParser.parse(data: opfData)
@@ -240,6 +244,9 @@ final class EPUBParser {
             guard let href = opfParser.manifest[spineItem] else { continue }
             let chapterURL = opfDir.appendingPathComponent(href)
 
+            // Always need the file on disk to extract a title. For opening a
+            // large book we still read it, but we drop the content immediately
+            // unless `loadContent` is true (import path).
             guard let content = try? String(contentsOf: chapterURL, encoding: .utf8) else { continue }
 
             // Extract title from content or use filename
@@ -248,7 +255,11 @@ final class EPUBParser {
             // Find the TOC title if available
             let tocTitle = opfParser.tocTitles[spineItem] ?? title
 
-            chapters.append(EPUBChapter(title: tocTitle, href: href, content: content))
+            chapters.append(EPUBChapter(
+                title: tocTitle,
+                href: href,
+                content: loadContent ? content : ""
+            ))
         }
 
         return chapters

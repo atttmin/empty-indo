@@ -10,7 +10,8 @@ import SwiftData
 /// translation), keyed by a stable hash of its source text.
 ///
 /// Local store only: translations are derived from book content and
-/// regenerable, so they never sync — same rule as `Chapter`/`Chunk`. This
+/// regenerable, so they never enter the notes package — same rule as
+/// `Chapter`/`Chunk`. This
 /// is what makes 双语对照 open instantly on a re-read: the reader renders
 /// the original immediately and fills 译文 from here, never re-translating
 /// a paragraph it has seen before (the prototype's 「预译 + 永不阻塞」).

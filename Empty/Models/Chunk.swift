@@ -10,8 +10,8 @@ import SwiftData
 /// memory.
 ///
 /// Pure derived data — re-chunkable from `Chapter.text` at any time — so it
-/// lives in the local store and never syncs. `text` is duplicated from the
-/// chapter on purpose: retrieval must not fault in whole chapters.
+/// lives in the local store and never enters the notes package. `text` is
+/// duplicated from the chapter on purpose: retrieval must not fault in whole chapters.
 @Model
 final class Chunk {
     #Index<Chunk>([\.bookID], [\.bookID, \.ordinal])

@@ -7,7 +7,7 @@ import Foundation
 import SwiftData
 
 /// What kind of card a `StudyCardEntry` is — the prototype's 复习卡 /
-/// 问答卡 / 链接卡. Stored raw so CloudKit records stay plain strings.
+/// 问答卡 / 链接卡. Stored raw so backup/export payloads stay plain strings.
 nonisolated enum StudyCardKind: String, Codable, CaseIterable, Sendable {
     /// Spaced-repetition Q&A generated from a highlight (复习卡).
     case review
@@ -29,10 +29,26 @@ final class StudyCardEntry {
     /// e.g. "Walden · Ch.2"
     var source: String?
     var highlightID: UUID?
+    /// Exact source passage, when the card was created from an anchored reader context.
+    var sourceChapterIndex: Int?
+    var sourceUTF16Offset: Int?
+
+    var sourcePosition: ReadingPosition? {
+        guard let sourceChapterIndex, let sourceUTF16Offset else { return nil }
+        return ReadingPosition(
+            chapterIndex: sourceChapterIndex,
+            utf16Offset: sourceUTF16Offset
+        )
+    }
+
+    func setSourcePosition(_ position: ReadingPosition?) {
+        sourceChapterIndex = position?.chapterIndex
+        sourceUTF16Offset = position?.utf16Offset
+    }
     var book: Book?
 
     /// Raw `StudyCardKind`; optional so records created before the field
-    /// existed (and CloudKit-synced ones) default to `.review`.
+    /// existed default to `.review`.
     private var kindRawValue: String?
     var kind: StudyCardKind {
         get { kindRawValue.flatMap(StudyCardKind.init(rawValue:)) ?? .review }

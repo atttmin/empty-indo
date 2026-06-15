@@ -8,7 +8,7 @@ import SwiftData
 
 /// One continuous reading sitting. Powers reading stats and gives
 /// "previously on" recaps a notion of *what you read last time*.
-/// Synced store.
+/// Reader data store.
 ///
 /// Set `book` after inserting into a context.
 @Model

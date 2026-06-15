@@ -86,6 +86,34 @@ nonisolated enum ReaderTheme: String, CaseIterable {
         }
     }
 
+    /// Paged mode: inner paper card fill.
+    func pageFill(baseIsDark: Bool) -> Color {
+        switch self {
+        case .paper:
+            return baseIsDark ? Color(hex: 0x241F18) : Color(hex: 0xFBF7EF)
+        case .wheat:
+            return Color(hex: 0xF4E8D1)
+        case .night:
+            return Color(hex: 0x312920)
+        case .inkblack:
+            return Color(hex: 0x14120F)
+        }
+    }
+
+    /// Paged mode: paper-card border / gutter rule.
+    func pageRule(baseIsDark: Bool) -> Color {
+        switch self {
+        case .paper:
+            return baseIsDark ? Color(hex: 0x3B342A) : Color(hex: 0xE0D4C0)
+        case .wheat:
+            return Color(hex: 0xD8C29A)
+        case .night:
+            return Color(hex: 0x433A2E)
+        case .inkblack:
+            return Color(hex: 0x2B261F)
+        }
+    }
+
     /// Swatch fill for the settings picker.
     var swatch: Color {
         switch self {
@@ -129,10 +157,236 @@ nonisolated enum ReaderFont: String, CaseIterable {
     }
 }
 
+/// Reader text block width — narrower text columns feel more like a page and
+/// reduce phone-edge crowding.
+nonisolated enum ReaderContentWidth: String, CaseIterable {
+    case narrow
+    case medium
+    case wide
+
+    var title: String {
+        switch self {
+        case .narrow: "窄"
+        case .medium: "中"
+        case .wide: "宽"
+        }
+    }
+
+    func maxTextWidth(isMac: Bool) -> CGFloat {
+        switch self {
+        case .narrow: isMac ? 620 : 540
+        case .medium: isMac ? 700 : 620
+        case .wide: isMac ? 780 : 720
+        }
+    }
+
+    func scrollHorizontalPadding(viewWidth: CGFloat, isMac: Bool) -> CGFloat {
+        switch (self, isMac) {
+        case (.narrow, true):
+            max(56, min(112, viewWidth * 0.14))
+        case (.medium, true):
+            max(46, min(96, viewWidth * 0.12))
+        case (.wide, true):
+            max(34, min(74, viewWidth * 0.09))
+        case (.narrow, false):
+            max(28, min(42, viewWidth * 0.11))
+        case (.medium, false):
+            max(22, min(34, viewWidth * 0.08))
+        case (.wide, false):
+            max(16, min(24, viewWidth * 0.05))
+        }
+    }
+
+    func pagedHorizontalInset(viewWidth: CGFloat, isMac: Bool) -> CGFloat {
+        switch (self, isMac) {
+        case (.narrow, true):
+            max(86, min(144, viewWidth * 0.14))
+        case (.medium, true):
+            max(72, min(128, viewWidth * 0.11))
+        case (.wide, true):
+            max(56, min(108, viewWidth * 0.08))
+        case (.narrow, false):
+            max(32, min(52, viewWidth * 0.11))
+        case (.medium, false):
+            max(24, min(40, viewWidth * 0.08))
+        case (.wide, false):
+            max(18, min(30, viewWidth * 0.05))
+        }
+    }
+}
+
+/// Book-style first-line indentation for continuous prose.
+nonisolated enum ReaderFirstLineIndent: String, CaseIterable {
+    case none
+    case modest
+    case classic
+
+    var title: String {
+        switch self {
+        case .none: "无"
+        case .modest: "1.5 格"
+        case .classic: "2 格"
+        }
+    }
+
+    func points(fontSize: Double) -> CGFloat {
+        switch self {
+        case .none: 0
+        case .modest: CGFloat(fontSize * 1.5)
+        case .classic: CGFloat(fontSize * 2.0)
+        }
+    }
+}
+
+/// Paragraph rhythm: denser for manuals, looser for essays.
+nonisolated enum ReaderParagraphSpacingStyle: String, CaseIterable {
+    case tight
+    case book
+    case airy
+
+    var title: String {
+        switch self {
+        case .tight: "紧"
+        case .book: "书卷"
+        case .airy: "疏朗"
+        }
+    }
+
+    func blockPadding(fontSize: Double) -> CGFloat {
+        switch self {
+        case .tight: max(4, fontSize * 0.22)
+        case .book: max(7, fontSize * 0.34)
+        case .airy: max(10, fontSize * 0.46)
+        }
+    }
+
+    func paragraphSpacing(fontSize: Double) -> CGFloat {
+        switch self {
+        case .tight: CGFloat(fontSize * 0.46)
+        case .book: CGFloat(fontSize * 0.62)
+        case .airy: CGFloat(fontSize * 0.82)
+        }
+    }
+}
+
+nonisolated enum ReaderTextAlignmentStyle: String, CaseIterable {
+    case leading
+    case justified
+
+    var title: String {
+        switch self {
+        case .leading: "左对齐"
+        case .justified: "两端对齐"
+        }
+    }
+
+    var usesJustifiedText: Bool {
+        self == .justified
+    }
+}
+
+/// Chapter opening: keep the first paragraph quieter, treat it like a
+/// section opener, or add book-style ornament (small chapter title +
+/// decorative rule / drop cap).
+nonisolated enum ReaderChapterOpeningStyle: String, CaseIterable {
+    case outdent
+    case enlarged
+    case ornament
+    case dropCap
+    case plain
+
+    var title: String {
+        switch self {
+        case .outdent: "首段不缩进"
+        case .enlarged: "首段放大"
+        case .ornament: "章首饰线"
+        case .dropCap: "首字下沉"
+        case .plain: "简洁章首"
+        }
+    }
+
+    /// Whether the opening paragraph should also render a chapter header
+    /// (small title + decorative rule) above the first paragraph.
+    var showsChapterHeader: Bool {
+        self == .ornament
+    }
+
+    /// Whether the opening paragraph should enlarge its first character.
+    var usesDropCap: Bool {
+        self == .dropCap
+    }
+}
+
 /// Everything the reading canvas needs to draw itself.
 nonisolated struct ReaderAppearance: Equatable {
     var theme: ReaderTheme = .paper
     var font: ReaderFont = .serif
+    var contentWidth: ReaderContentWidth = .medium
+    var firstLineIndent: ReaderFirstLineIndent = .none
+    var paragraphSpacing: ReaderParagraphSpacingStyle = .book
+    var textAlignment: ReaderTextAlignmentStyle = .leading
+    var chapterOpening: ReaderChapterOpeningStyle = .plain
+
+    static let paperPreset = ReaderAppearance(
+        theme: .wheat,
+        font: .serif,
+        contentWidth: .medium,
+        firstLineIndent: .classic,
+        paragraphSpacing: .book,
+        textAlignment: .justified,
+        chapterOpening: .outdent
+    )
+
+    func scrollHorizontalPadding(viewWidth: CGFloat, isMac: Bool) -> CGFloat {
+        contentWidth.scrollHorizontalPadding(viewWidth: viewWidth, isMac: isMac)
+    }
+
+    func pagedHorizontalInset(viewWidth: CGFloat, isMac: Bool) -> CGFloat {
+        contentWidth.pagedHorizontalInset(viewWidth: viewWidth, isMac: isMac)
+    }
+
+    func maxTextWidth(isMac: Bool) -> CGFloat {
+        contentWidth.maxTextWidth(isMac: isMac)
+    }
+
+    func blockPadding(fontSize: Double) -> CGFloat {
+        paragraphSpacing.blockPadding(fontSize: fontSize)
+    }
+
+    func paragraphSpacing(fontSize: Double) -> CGFloat {
+        paragraphSpacing.paragraphSpacing(fontSize: fontSize)
+    }
+
+    func firstLineIndentPoints(fontSize: Double, isOpeningParagraph: Bool) -> CGFloat {
+        if isOpeningParagraph, chapterOpening != .plain {
+            return 0
+        }
+        return firstLineIndent.points(fontSize: fontSize)
+    }
+
+    func openingFontSize(base: Double, isOpeningParagraph: Bool) -> Double {
+        guard isOpeningParagraph else { return base }
+        switch chapterOpening {
+        case .enlarged, .ornament: return base + 1.5
+        case .dropCap: return base + 0.5
+        case .outdent, .plain: return base
+        }
+    }
+
+    /// Size of the first character when using a drop-cap opening.
+    func dropCapFontSize(base: Double) -> Double {
+        base * 2.6
+    }
+
+    /// Vertical offset to visually seat a drop cap on the first baseline.
+    func dropCapBaselineOffset(base: Double) -> CGFloat {
+        base * 0.22
+    }
+
+    /// Vertical clearance consumed by a chapter-header ornament.
+    func chapterHeaderSpacing(fontSize: Double) -> CGFloat {
+        chapterOpening.showsChapterHeader ? max(18, fontSize * 1.2) : 0
+    }
 }
 
 /// How the iOS reader advances text (Mac always scrolls).

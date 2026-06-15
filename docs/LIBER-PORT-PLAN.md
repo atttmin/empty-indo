@@ -15,7 +15,7 @@
 | 核心叙事 | 开放图书馆、可引用、可 fork、Agent-friendly | 私密深读、**防剧透**、朱批伴读 |
 | AI | Workers AI + 可选 Agent 工具循环（`functions/lib/agent.ts`） | `ReadingAgent` + 本机 FM / 云端 BYOK |
 | 跨书关联 | **Echoes**（馆藏句级呼应 + 活知识图谱） | **思维链接**（用户高亮词法匹配） |
-| 账号 | Guest / 钱包 / **Passkey** | 暂无账号；CloudKit 预留 |
+| 账号 | Guest / 钱包 / **Passkey** | 暂无账号；当前只用本机 |
 | 社交 | Feed、共读组、对话卡 fork 树 | 无（个人学习工具） |
 | 链 / 存储 | Walrus / Sui 可选证明层 | 本地 SwiftData；正文不上云 |
 
@@ -37,7 +37,7 @@
 | 阅读布局（经典 / 档案 / 沉浸 / **竖排**） | WebKit 分栏 + 字体调节 | ★★★☆☆ | **P2** — 竖排、繁简（古文向） |
 | 章节切分（论语篇、史书卷、词牌…） | `EPUBParser` 按 spine | ★★☆☆☆ | **P3** — 仅在做公版内置书库时 |
 | Gutenberg / Wikisource 导入 CLI | 用户自导入 | ★★☆☆☆ | **不做** — 产品形态不同 |
-| **Passkey 登录** | 无 | ★★★☆☆ | **P3** — 借实现思路，见 MEMORY 方案 |
+| **Passkey 登录** | 无 | ★☆☆☆☆ | **暂停** — 当前版本不做账号壳 |
 | 社交 Feed / 共读组 / 讨论串 | 无 | ★☆☆☆☆ | **不做** |
 | 榜单 Charts / Agent Square | 无 | ★☆☆☆☆ | **不做** |
 | MCP / Agent View 开放层 | 无 | ★★☆☆☆ | **P4** — 远期「导出 Agent 可读笔记」 |
@@ -113,12 +113,9 @@
 | E4-2 | 竖排阅读模式（EPUB CSS / 分页策略评估） |
 | E4-3 | 第三种布局「档案感」（Mac 阅读器 typography preset） |
 
-### Wave 5 — P3：账号与可选云
+### Wave 5 — P3：账号与可选云（暂停）
 
-| 任务 | Liber 参考 | Empty 落点 |
-|------|------------|------------|
-| E5-1 | `passkey.ts` | Passkey + CloudKit 同步 `MemoryItem`（READER-MEMORY Phase 3） |
-| E5-2 | Liber `/api/reading/*` | **可选**：登录用户把高亮/sync 到 Liber 后端（双产品互通，非必须） |
+当前存储设计已收窄为本机 SwiftData。Liber 账号、后端高亮同步和 Passkey 只作为远期研究材料，不进入当前 Empty 路线图。
 
 ### 明确不做（除非产品转向）
 
@@ -205,12 +202,11 @@ flowchart LR
 ```
 Empty App                          Liber API
 ──────────                         ─────────
-Highlight PUT  ──(auth token)──►  /api/reading/:book/highlight
-MemoryItem     ──(export only)──►  /api/shares (对话卡形态)
-recall 公版 echo ◄──(read only)──  GET /api/graph/echoes?sid=…
+MemoryItem     ──(explicit export only, future)──►  /api/shares (对话卡形态)
+recall 公版 echo ◄──(read only, future)──────────── GET /api/graph/echoes?sid=…
 ```
 
-约束：Empty **仍不把未读书正文上传**；仅同步用户产生的数据。Passkey 会话可复用 Liber `functions/lib/passkey.ts` 语义。
+约束：Empty **仍不把未读书正文上传**；当前不接账号会话，不复用 Liber Passkey 语义。
 
 ---
 
@@ -223,7 +219,7 @@ recall 公版 echo ◄──(read only)──  GET /api/graph/echoes?sid=…
 3. **LIBER-E2** — Echo 浮层 UX + 伴读镜片
 4. **READER-MEMORY PR-5** — `propose_memory`
 5. **LIBER-E3** — 卡片 fork + Notebook 导出
-6. **LIBER-E4/E5** — 竖排繁简、Passkey（按产品排期）
+6. **LIBER-E4** — 竖排繁简；账号 / Passkey 暂停
 
 ---
 
@@ -243,7 +239,7 @@ recall 公版 echo ◄──(read only)──  GET /api/graph/echoes?sid=…
 | 是否内置 CC0 书库 | 否；保持用户导入；公版阅读继续用 Liber Web |
 | 是否持久化 `EchoEdge` 表 | Phase 1 运行时 recall；Phase 1b 可选持久化边 |
 | Lens 数量 | 先 4 个：默认 / 今译 / 辩难 / 文献 |
-| 与 Liber 代码复用 | **思路与 spec 复用**，不共享 TS 运行时；Passkey 可参考后端逻辑用 Swift 重写 |
+| 与 Liber 代码复用 | **思路与 spec 复用**，不共享 TS 运行时；账号 / Passkey 不进当前版本 |
 
 ---
 

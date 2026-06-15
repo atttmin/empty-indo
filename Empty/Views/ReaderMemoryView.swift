@@ -62,7 +62,7 @@ struct ReaderMemoryView: View {
                     }
                 }
 
-                Text("记忆只来自你读过和问过的内容，全部存在本机/你的 iCloud，逐条可删。")
+                Text("记忆只来自你读过和问过的内容，全部存在本机，逐条可删。")
                     .font(.system(size: 10.5))
                     .foregroundStyle(palette.ink3)
             }
@@ -77,7 +77,7 @@ struct ReaderMemoryView: View {
         .presentationDragIndicator(.visible)
         #endif
         .task {
-            try? ReaderMemory(modelContext: modelContext).syncFromReaderData()
+            _ = try? ReaderMemory(modelContext: modelContext).syncFromReaderData()
             compressionMessage = nil
         }
     }
@@ -90,7 +90,7 @@ struct ReaderMemoryView: View {
                 Text("\(visibleItems.count) 条 · 越读越懂你")
                     .font(.system(size: 11))
                     .foregroundStyle(palette.ink3)
-                Text("短摘要随当前 synced store 保留；语义向量仅留在本机。")
+                Text("短摘要可进读者笔记包；语义向量仅留在本机。")
                     .font(.system(size: 10.5))
                     .foregroundStyle(palette.ink3)
             }

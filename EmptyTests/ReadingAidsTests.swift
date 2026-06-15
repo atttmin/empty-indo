@@ -167,4 +167,15 @@ struct StudyCardKindTests {
         link.kind = .review
         #expect(link.kind == .review)
     }
+
+    @Test func sourcePositionRoundTripsAsReaderPosition() {
+        let card = StudyCardEntry(question: "Q", answer: "A")
+        #expect(card.sourcePosition == nil)
+        card.setSourcePosition(ReadingPosition(chapterIndex: 2, utf16Offset: 480))
+        #expect(card.sourceChapterIndex == 2)
+        #expect(card.sourceUTF16Offset == 480)
+        #expect(card.sourcePosition == ReadingPosition(chapterIndex: 2, utf16Offset: 480))
+        card.setSourcePosition(nil)
+        #expect(card.sourcePosition == nil)
+    }
 }

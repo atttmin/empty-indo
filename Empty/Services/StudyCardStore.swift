@@ -32,6 +32,12 @@ struct StudyCardStore {
                 source: source,
                 highlightID: highlight.id
             )
+            entry.setSourcePosition(
+                ReadingPosition(
+                    chapterIndex: highlight.chapterIndex,
+                    utf16Offset: highlight.startUTF16
+                )
+            )
             entry.book = book
             modelContext.insert(entry)
             created.append(entry)

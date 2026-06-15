@@ -13,6 +13,8 @@ import SwiftData
 import SwiftUI
 
 struct IOSCardsScreen: View {
+    var onOpenPosition: (Book, ReadingPosition) -> Void = { _, _ in }
+
     @Environment(\.emptyPalette) private var palette
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Highlight.createdAt, order: .reverse) private var highlights: [Highlight]
@@ -128,7 +130,7 @@ struct IOSCardsScreen: View {
             }
 
             ForEach(visibleStudyCards) { card in
-                IOSStudyCard(card: card)
+                IOSStudyCard(card: card, onOpenSource: sourceJumpAction(for: card))
             }
 
             ForEach(visibleHighlights) { highlight in
@@ -166,6 +168,26 @@ struct IOSCardsScreen: View {
                     .font(.system(size: 12))
                     .foregroundStyle(palette.ink3)
             }
+            if let book = highlight.book {
+                Button {
+                    onOpenPosition(
+                        book,
+                        ReadingPosition(
+                            chapterIndex: highlight.chapterIndex,
+                            utf16Offset: highlight.startUTF16
+                        )
+                    )
+                } label: {
+                    Label("跳回原文", systemImage: "arrow.turn.up.backward")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(palette.accentSoft, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("cards.highlight.jump")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18))
@@ -187,6 +209,26 @@ struct IOSCardsScreen: View {
         if let title = highlight.book?.title { parts.append(title) }
         parts.append("第 \(highlight.chapterIndex + 1) 章")
         return parts.joined(separator: " · ")
+    }
+
+    private func sourceJumpAction(for card: StudyCardEntry) -> (() -> Void)? {
+        guard let book = card.book else { return nil }
+        if let position = card.sourcePosition {
+            return { onOpenPosition(book, position) }
+        }
+        if let highlightID = card.highlightID,
+           let highlight = highlights.first(where: { $0.id == highlightID }) {
+            return {
+                onOpenPosition(
+                    highlight.book ?? book,
+                    ReadingPosition(
+                        chapterIndex: highlight.chapterIndex,
+                        utf16Offset: highlight.startUTF16
+                    )
+                )
+            }
+        }
+        return nil
     }
 
     // MARK: 朱批 · 发现关联
@@ -236,6 +278,7 @@ struct IOSCardsScreen: View {
 
 private struct IOSStudyCard: View {
     let card: StudyCardEntry
+    let onOpenSource: (() -> Void)?
 
     @Environment(\.emptyPalette) private var palette
     @Environment(\.modelContext) private var modelContext
@@ -300,6 +343,21 @@ private struct IOSStudyCard: View {
                     .background(palette.accentSoft, in: Capsule())
                 }
                 .padding(.top, 12)
+                if let onOpenSource {
+                    Button {
+                        onOpenSource()
+                    } label: {
+                        Label("跳回原文", systemImage: "arrow.turn.up.backward")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(palette.accent)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(palette.accentSoft, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("cards.study.jump")
+                }
             } else {
                 Text(card.answer)
                     .font(.system(size: 12.5))
@@ -312,6 +370,21 @@ private struct IOSStudyCard: View {
                         .foregroundStyle(palette.ink3)
                         .lineLimit(1)
                         .padding(.top, 8)
+                }
+                if let onOpenSource {
+                    Button {
+                        onOpenSource()
+                    } label: {
+                        Label("跳回原文", systemImage: "arrow.turn.up.backward")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(palette.accent)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(palette.accentSoft, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("cards.study.jump")
                 }
             }
         }

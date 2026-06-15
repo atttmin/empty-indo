@@ -52,7 +52,7 @@ nonisolated struct EmptyPalette: Equatable {
         isDark: false,
         window: Color(hex: 0xF7F2E9),
         side: Color(hex: 0xF0E9DC),
-        card: .white,
+        card: Color(hex: 0xFBF7EF),
         ink: Color(hex: 0x2A2419),
         ink2: Color(hex: 0x5C5443),
         ink3: Color(hex: 0x988E7D),
@@ -83,6 +83,7 @@ nonisolated struct EmptyPalette: Equatable {
         highlight: Color(hex: 0xE5C55E, opacity: 0.3),
         shadow: Color(hex: 0x000000, opacity: 0.45)
     )
+
 }
 
 extension EnvironmentValues {

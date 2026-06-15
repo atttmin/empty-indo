@@ -3,8 +3,7 @@
 <plist version="1.0">
 <dict>
 	<!-- Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE
-	     stays on); this file only adds the empty:// deep-link scheme
-	     used by exported excerpts. -->
+	     stays on). Adds empty:// deep links and the .empty-notes package type. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -16,9 +15,27 @@
 			</array>
 		</dict>
 	</array>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<key>UTExportedTypeDeclarations</key>
 	<array>
-		<string>davirian.Empty.server-sync</string>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Empty Reader Notes Package</string>
+			<key>UTTypeIdentifier</key>
+			<string>app.empty.notes</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>empty-notes</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/json</string>
+			</dict>
+		</dict>
 	</array>
 </dict>
 </plist>

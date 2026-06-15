@@ -65,6 +65,7 @@ private final class ScriptedAIService: AIService, @unchecked Sendable {
     nonisolated(unsafe) var stepQueue: [AgentStep]
     nonisolated(unsafe) var fallbackAnswer = "fallback"
     nonisolated(unsafe) var flashcardsToReturn: [Flashcard] = []
+    nonisolated(unsafe) var seenTranscripts: [String] = []
 
     init(steps: [AgentStep]) {
         self.stepQueue = steps
@@ -96,6 +97,7 @@ private final class ScriptedAIService: AIService, @unchecked Sendable {
     }
 
     func toolStep(toolDocs: String, transcript: String) async throws -> AgentStep {
+        seenTranscripts.append(transcript)
         guard !stepQueue.isEmpty else { return .finish(answer: "done") }
         return stepQueue.removeFirst()
     }
@@ -146,6 +148,48 @@ struct ReadingAgentTests {
         #expect(reply.actions.count == 1)
         #expect(reply.actions.first?.title == "加入生词本「resignation」")
     }
+
+    @Test func transcriptPreludeReachesToolStep() async throws {
+        let fixture = try makeFixture(steps: [
+            .finish(answer: "就这段来说，作者先收束再转折。")
+        ])
+        let agent = ReadingAgent(
+            toolbox: fixture.toolbox,
+            service: fixture.service,
+            maxSteps: 3
+        )
+
+        _ = try await agent.run(
+            question: "这一段在干什么？",
+            transcriptPrelude: "当前书: 《Walden》\n当前读到: Economy\n刚读过的上下文（只到当前进度）:\n作者先减法，再转折。"
+        )
+
+        let transcript = try #require(fixture.service.seenTranscripts.first)
+        #expect(transcript.contains("当前书: 《Walden》"))
+        #expect(transcript.contains("刚读过的上下文"))
+        #expect(transcript.contains("读者:这一段在干什么？"))
+    }
+    @Test func searchPassagesReturnsEvidenceBlocks() async throws {
+        let fixture = try makeFixture(steps: [])
+        let context = fixture.container.mainContext
+        context.insert(Chapter(
+            bookID: fixture.book.id,
+            index: 0,
+            title: "Economy",
+            text: "Simplicity, simplicity, simplicity."
+        ))
+        try context.save()
+
+        let result = try await fixture.toolbox.run("search_passages", argument: "simplicity")
+
+        #expect(result.observation.contains("命中段落："))
+        #expect(result.evidenceBlocks.count == 1)
+        #expect(result.evidenceBlocks.first?.title.contains("Walden") == true)
+        #expect(result.evidenceBlocks.first?.body.contains("Simplicity") == true)
+        #expect(result.evidenceBlocks.first?.scope == .currentBook)
+        #expect(result.evidenceBlocks.first?.emphasisTerms == ["simplicity"])
+    }
+
 
     @Test func proposalsDoNotWriteUntilPerformed() async throws {
         let fixture = try makeFixture(steps: [])

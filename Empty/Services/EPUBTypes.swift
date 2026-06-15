@@ -23,8 +23,10 @@ nonisolated struct EPUBChapter {
     let title: String
     /// Manifest href, relative to the OPF directory.
     let href: String
-    /// Raw XHTML, rendered by the reader's web view.
-    let content: String
+    /// Raw XHTML, rendered by the reader's web view. Mutable so a book can
+    /// load chapters on demand instead of pulling every spine item into
+    /// memory at open time.
+    var content: String
 
     /// Tag-stripped plain text — the substrate for `Chapter.text`, chunking,
     /// and position anchors.
@@ -36,10 +38,29 @@ nonisolated struct EPUBChapter {
 /// A fully parsed EPUB, ready for reading.
 nonisolated struct EPUBBook {
     let metadata: EPUBMetadata
-    let chapters: [EPUBChapter]
+    /// Spine items in reading order. `chapters` is mutable so content can be
+    /// loaded on demand; only the currently visible chapter needs its full
+    /// XHTML in memory.
+    var chapters: [EPUBChapter]
     let coverImageData: Data?
     /// Root of the unzipped archive; chapter resource URLs resolve against it.
     let basePath: URL
+    /// Directory containing the OPF package file. Chapter `href`s are stored
+    /// relative to this directory, so on-demand loading resolves against it.
+    let opfDirectory: URL
+
+    /// Loads the raw XHTML for the chapter at `index` from the unzipped
+    /// archive. Does nothing if the index is out of range or the file is
+    /// missing, so callers can call it defensively before rendering.
+    mutating func loadContent(forChapterAt index: Int) {
+        guard chapters.indices.contains(index) else { return }
+        let chapterURL = opfDirectory.appendingPathComponent(chapters[index].href)
+        guard FileManager.default.fileExists(atPath: chapterURL.path),
+              let content = try? String(contentsOf: chapterURL, encoding: .utf8) else {
+            return
+        }
+        chapters[index].content = content
+    }
 }
 
 /// Crude but dependable XHTML → plain text. Good enough for chunking and AI

@@ -6,28 +6,25 @@
 import Foundation
 import SwiftData
 
-/// Two-store persistence layout. The split is the architecture:
-/// **sync the reader's data, not the book's content.**
+/// Two-store local persistence layout. The split is the architecture:
+/// keep the reader's small authored data separate from bulky derived book content.
 ///
-/// - **Synced** — library metadata, reading positions, highlights, sessions
-///   (`Book`, `Highlight`, `ReadingSession`). Small, precious, written to
-///   sync via CloudKit. Models follow CloudKit rules: attributes defaulted
-///   or optional, relationships optional, no unique constraints.
-/// - **Local** — bulky derived text (`Chapter`, `Chunk`), translation cache,
-///   and on-device semantic vectors (`ParagraphTranslation`, `MemoryEmbedding`).
-///   Always re-derivable from the imported file or synced reader state; never
+/// - **Reader data** — library metadata, reading positions, highlights, notes,
+///   vocab, study cards, bookmarks, and ReaderMemory. Small, precious, and the
+///   future backup/export surface.
+/// - **Local derived data** — chapter text, chunks, translation cache, and
+///   on-device semantic vectors. Rebuildable from imported files or reader data.
 ///
 /// Cross-store references go through `Book.id` only. SwiftData cannot relate
-/// models across stores, and that constraint is load-bearing: it keeps book
-/// content out of the sync pipeline by construction.
+/// models across stores, and that constraint is load-bearing: it keeps imported
+/// book content out of the future notes-backup pipeline by construction.
 enum AppStores {
-    /// The actual CloudKit-backed database used when the selected live sync
-    /// provider is `.cloudKit`.
-    /// Builds signed without an iCloud entitlement still fall back to `.none`
-    /// at container creation time.
-    private static let syncedDatabase = ModelConfiguration.CloudKitDatabase.automatic
+    /// Kept as `Synced` to reopen existing local SQLite files created before
+    /// the cloud path was removed. Despite the historical name, this store is
+    /// local-only.
+    private static let readerDataStoreName = "Synced"
 
-    static let syncedSchema = Schema([
+    static let readerDataSchema = Schema([
         Book.self,
         Highlight.self,
         ReadingSession.self,
@@ -45,7 +42,7 @@ enum AppStores {
     ])
 
     enum StorePlacement {
-        case synced
+        case readerData
         case local
     }
 
@@ -54,7 +51,7 @@ enum AppStores {
         case is Book.Type, is Highlight.Type, is ReadingSession.Type,
              is VocabEntry.Type, is StudyCardEntry.Type, is Bookmark.Type,
              is MemoryItem.Type:
-            .synced
+            .readerData
         case is Chapter.Type, is Chunk.Type, is ParagraphTranslation.Type,
              is MemoryEmbedding.Type:
             .local
@@ -68,19 +65,16 @@ enum AppStores {
     ///   the same `/dev/null` pseudo-file, and concurrent containers
     ///   (parallel tests) trip over the shared SQLite locks. Unique temp
     ///   files keep ephemeral containers fully isolated.
-    static func makeContainer(
-        syncMode: SyncLiveMode = .cloudKit,
-        ephemeral: Bool = false
-    ) throws -> ModelContainer {
-        let synced: ModelConfiguration
+    static func makeContainer(ephemeral: Bool = false) throws -> ModelContainer {
+        let readerData: ModelConfiguration
         let local: ModelConfiguration
         if ephemeral {
             let base = FileManager.default.temporaryDirectory
                 .appending(path: "EmptyStores-\(UUID().uuidString)", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            synced = ModelConfiguration(
-                "Synced",
-                schema: syncedSchema,
+            readerData = ModelConfiguration(
+                readerDataStoreName,
+                schema: readerDataSchema,
                 url: base.appending(path: "Synced.store"),
                 cloudKitDatabase: .none
             )
@@ -91,11 +85,11 @@ enum AppStores {
                 cloudKitDatabase: .none
             )
         } else {
-            synced = ModelConfiguration(
-                "Synced",
-                schema: syncedSchema,
+            readerData = ModelConfiguration(
+                readerDataStoreName,
+                schema: readerDataSchema,
                 isStoredInMemoryOnly: false,
-                cloudKitDatabase: syncMode == .cloudKit ? syncedDatabase : .none
+                cloudKitDatabase: .none
             )
             local = ModelConfiguration(
                 "Local",
@@ -117,23 +111,6 @@ enum AppStores {
             ParagraphTranslation.self,
             MemoryEmbedding.self,
         ])
-        do {
-            return try ModelContainer(for: allModels, configurations: synced, local)
-        } catch where !ephemeral && syncMode == .cloudKit {
-            // CloudKit needs a provisioned iCloud entitlement; builds signed
-            // without one (CI, ad-hoc dev runs) land here. The same on-disk
-            // stores reopen local-only, so data survives and sync resumes on
-            // the next properly signed launch.
-            let localOnlySynced = ModelConfiguration(
-                "Synced",
-                schema: syncedSchema,
-                isStoredInMemoryOnly: false,
-                cloudKitDatabase: .none
-            )
-            return try ModelContainer(
-                for: allModels,
-                configurations: localOnlySynced, local
-            )
-        }
+        return try ModelContainer(for: allModels, configurations: readerData, local)
     }
 }
