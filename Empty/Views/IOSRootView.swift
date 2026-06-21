@@ -67,7 +67,10 @@ struct IOSRootView: View {
             )
             .environment(\.emptyPalette, palette)
         }
-        .task { applyLaunchOverrides() }
+        .task {
+            applyLaunchOverrides()
+            _ = await ReaderAITaskQueue.processPending(modelContext: modelContext)
+        }
         .onOpenURL(perform: handleDeepLink)
     }
 
@@ -86,16 +89,22 @@ struct IOSRootView: View {
 
     private func applyLaunchOverrides() {
         let seeded = try? ScreenshotSeeder.seedDemoBookIfNeeded(modelContext: modelContext)
+        let seededPDF = try? ScreenshotSeeder.seedDemoPDFIfNeeded(modelContext: modelContext)
         let args = ProcessInfo.processInfo.arguments
         let fallback = try? modelContext.fetch(
             FetchDescriptor<Book>(sortBy: [SortDescriptor(\.lastOpenedAt, order: .reverse)])
         ).first
         let book = seeded ?? fallback
-        if args.contains("-OpenReader"), let book {
+        if args.contains("-OpenPDFReader"), let pdfBook = seededPDF {
+            openBook = pdfBook
+            tab = .reader
+        } else if args.contains("-OpenReader"), let book {
             openBook = book
             tab = .reader
         } else if args.contains("-OpenTabReader") {
             tab = .reader
+        } else if args.contains("-OpenTabCards") {
+            tab = .cards
         }
     }
 
@@ -105,7 +114,9 @@ struct IOSRootView: View {
         case .library:
             IOSLibraryScreen(
                 onOpenBook: open(_:),
-                onReview: { tab = .cards }
+                onReview: { tab = .cards },
+                onOpenPosition: open(_:at:),
+                onAskCompanion: openCompanion
             )
         case .reader:
             if let book = currentBook {
@@ -153,12 +164,14 @@ struct IOSRootView: View {
 
     private var tabBar: some View {
         HStack(spacing: 6) {
-            tabButton("⌂", "书库", .library)
+            tabButton("⌂", "今日", .library)
+                .accessibilityIdentifier("tab.today")
             tabButton("❧", "阅读", .reader)
+                .accessibilityIdentifier("tab.reader")
             tabButton("❏", "卡片", .cards)
+                .accessibilityIdentifier("tab.cards")
             Button {
-                companionPosition = nil
-                showCompanion = true
+                openCompanion()
             } label: {
                 Text("朱")
                     .font(.system(size: 14, weight: .black, design: .serif))
@@ -167,6 +180,7 @@ struct IOSRootView: View {
                     .background(palette.accent, in: Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("tab.companion")
         }
         .padding(6)
         .background(.ultraThinMaterial, in: Capsule())
@@ -204,6 +218,11 @@ struct IOSRootView: View {
         book.position = position
         try? modelContext.save()
         open(book)
+    }
+
+    private func openCompanion() {
+        companionPosition = nil
+        showCompanion = true
     }
 
     /// 追问 from the reader: opens the sheet and sends right away, using

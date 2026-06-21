@@ -44,6 +44,7 @@ struct IOSCompanionSheet: View {
                 send()
             }
         }
+        .accessibilityIdentifier("companion.sheet")
     }
 
     private var header: some View {
@@ -79,14 +80,23 @@ struct IOSCompanionSheet: View {
     }
 
     private var noBookState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             EnsoMark(size: 40)
                 .opacity(0.5)
             Text("先打开一本书,我才能不剧透地陪你读。")
-                .font(.system(size: 13))
-                .foregroundStyle(palette.ink3)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(palette.ink)
+            VStack(alignment: .leading, spacing: 7) {
+                Label("基于当前章节回顾上次读到哪里", systemImage: "clock.arrow.circlepath")
+                Label("解释选中文本,不越过你的阅读进度", systemImage: "text.magnifyingglass")
+                Label("把问答、生词、闪卡保存到卡片页", systemImage: "rectangle.stack.badge.plus")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(palette.ink3)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 28)
     }
 
     private var transcript: some View {
@@ -363,23 +373,39 @@ struct IOSCompanionSheet: View {
         }
     }
 
+    private var suggestionPrompts: [String] {
+        var prompts = [
+            "帮我回顾一下读到哪了",
+            "这一章的核心主张是什么?",
+            "找一条跨书关联",
+            "生成 3 张复习卡",
+        ]
+        if position.utf16Offset > 0 {
+            prompts.insert("解释我刚读到的这一页", at: 0)
+        }
+        return prompts
+    }
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                suggestionChip("帮我回顾一下读到哪了")
-                suggestionChip("这一章的核心主张是什么?")
-                if let book {
-                    Button("提炼本轮主题") {
-                        model.proposeTheme(for: book)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(suggestionPrompts, id: \.self) { prompt in
+                        suggestionChip(prompt)
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(model.canProposeTheme ? palette.accent : palette.ink3)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 5)
-                    .background(palette.card, in: Capsule())
-                    .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
-                    .disabled(!model.canProposeTheme)
+                    if let book {
+                        Button("提炼本轮主题") {
+                            model.proposeTheme(for: book)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(model.canProposeTheme ? palette.accent : palette.ink3)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(palette.card, in: Capsule())
+                        .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
+                        .disabled(!model.canProposeTheme)
+                    }
                 }
             }
             HStack(spacing: 8) {
@@ -389,6 +415,7 @@ struct IOSCompanionSheet: View {
                     .foregroundStyle(palette.ink)
                     .focused($inputFocused)
                     .onSubmit(send)
+                    .accessibilityIdentifier("companion.input")
 
                 Button(action: send) {
                     Text("↑")

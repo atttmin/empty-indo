@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import PDFKit
 import SwiftData
 
 enum ScreenshotSeeder {
@@ -20,12 +21,20 @@ enum ScreenshotSeeder {
         )
         let existing = try modelContext.fetch(descriptor)
         let book = try existing.first(where: isDemoBook) ?? importDemoBook(modelContext: modelContext)
-        if args.contains("-ScreenshotSeedHighlight") {
+        if book.lastOpenedAt == nil {
+            book.lastOpenedAt = Date()
+            try? modelContext.save()
+        }
+        if args.contains("-ScreenshotSeedHighlight") || args.contains("-ScreenshotSeedStudyData") {
             try seedDemoHighlightIfNeeded(book: book, modelContext: modelContext)
         }
         if args.contains("-ScreenshotSeedBookmark") {
             try seedDemoBookmarkIfNeeded(book: book, modelContext: modelContext)
         }
+        if args.contains("-ScreenshotSeedStudyData") {
+            try seedDemoStudyDataIfNeeded(book: book, modelContext: modelContext)
+        }
+        _ = try seedDemoPDFIfNeeded(modelContext: modelContext)
         return book
     }
 
@@ -48,6 +57,40 @@ enum ScreenshotSeeder {
             .importBook(from: epubURL)
     }
 
+
+    @discardableResult
+    @MainActor
+    static func seedDemoPDFIfNeeded(modelContext: ModelContext) throws -> Book? {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-ScreenshotSeedPDF") else { return nil }
+        if let existing = try modelContext.fetch(
+            FetchDescriptor<Book>(
+                predicate: #Predicate {
+                    $0.title == "纸页样本" && $0.author == "测试作者"
+                }
+            )
+        ).first {
+            if existing.lastOpenedAt == nil {
+                existing.lastOpenedAt = Date()
+                try? modelContext.save()
+            }
+            return existing
+        }
+
+        let temp = FileManager.default.temporaryDirectory
+            .appending(path: "EmptyScreenshotPDF-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let pdfURL = temp.appending(path: "demo.pdf")
+        try DemoPDF.write(to: pdfURL)
+
+        let store = try BookFileStore.makeDefault()
+        let book = try Library(modelContext: modelContext, fileStore: store).importBook(from: pdfURL)
+        book.lastOpenedAt = Date()
+        try? modelContext.save()
+        return book
+    }
     @MainActor
     private static func seedDemoHighlightIfNeeded(
         book: Book,
@@ -83,7 +126,118 @@ enum ScreenshotSeeder {
         bookmark.book = book
         try modelContext.save()
     }
+
+    @MainActor
+    private static func seedDemoStudyDataIfNeeded(
+        book: Book,
+        modelContext: ModelContext
+    ) throws {
+        let highlightStore = HighlightStore(modelContext: modelContext)
+        let highlight = try highlightStore.highlights(for: book).first(where: {
+            $0.textSnapshot.contains("深读始于空白")
+        })
+
+        if try modelContext.fetch(
+            FetchDescriptor<StudyCardEntry>(
+                predicate: #Predicate { $0.question == "空白处应该留给谁?" }
+            )
+        ).isEmpty {
+            let review = StudyCardEntry(
+                question: "空白处应该留给谁?",
+                answer: "留给批注、停顿和下一次回读。",
+                source: "\(book.title) · 第 1 章",
+                highlightID: highlight?.id,
+                kind: .review
+            )
+            review.book = book
+            review.setSourcePosition(ReadingPosition(chapterIndex: 0, utf16Offset: 0))
+            review.dueAt = Date().addingTimeInterval(-600)
+            modelContext.insert(review)
+        }
+
+        if try modelContext.fetch(
+            FetchDescriptor<VocabEntry>(
+                predicate: #Predicate { $0.word == "空白" }
+            )
+        ).isEmpty {
+            let vocab = VocabEntry(
+                word: "空白",
+                meaning: "留出来让思考发生的空间。",
+                note: "这里不是空无，而是刻意留白。",
+                sentence: "深读始于空白。导入一本书，朱批落在页边。",
+                source: "\(book.title) · 第 1 章"
+            )
+            vocab.book = book
+            vocab.setSourcePosition(ReadingPosition(chapterIndex: 0, utf16Offset: 0))
+            vocab.dueAt = Date().addingTimeInterval(-600)
+            modelContext.insert(vocab)
+        }
+
+        let relatedBook = try relatedGraphBookIfNeeded(modelContext: modelContext)
+        if try modelContext.fetch(
+            FetchDescriptor<StudyCardEntry>(
+                predicate: #Predicate { $0.question == "空白如何让深读发生?" }
+            )
+        ).isEmpty {
+            let link = StudyCardEntry(
+                question: "空白如何让深读发生?",
+                answer: "空白不是缺席，而是让深读和批注发生的空地。",
+                source: "\(relatedBook.title) ⟷ \(book.title)",
+                kind: .link
+            )
+            link.book = relatedBook
+            modelContext.insert(link)
+        }
+
+        try modelContext.save()
+    }
+
+    @MainActor
+    private static func relatedGraphBookIfNeeded(modelContext: ModelContext) throws -> Book {
+        if let existing = try modelContext.fetch(
+            FetchDescriptor<Book>(
+                predicate: #Predicate { $0.title == "旁注之书" }
+            )
+        ).first {
+            return existing
+        }
+
+        let related = Book(title: "旁注之书", author: "测试作者", format: .epub)
+        related.languageTag = "zh"
+        modelContext.insert(related)
+        return related
+    }
 }
+
+private enum DemoPDF {
+    static func write(to url: URL) throws {
+        let document = PDFDocument()
+        document.documentAttributes = [
+            PDFDocumentAttribute.titleAttribute: "纸页样本",
+            PDFDocumentAttribute.authorAttribute: "测试作者",
+        ]
+        for (index, text) in [
+            "第一页：PDF 阅读器应该稳定打开、翻页，并保留回到原文的能力。",
+            "第二页：即使是纸页，也要把 AI、检索与批注接在同一条阅读链路里。"
+        ].enumerated() {
+            let page = PDFPage()
+            page.setBounds(CGRect(x: 0, y: 0, width: 612, height: 792), for: .mediaBox)
+            let annotation = PDFAnnotation(
+                bounds: CGRect(x: 72, y: 650, width: 440, height: 80),
+                forType: .freeText,
+                withProperties: nil
+            )
+            annotation.contents = text
+            page.addAnnotation(annotation)
+            document.insert(page, at: index)
+        }
+        guard document.write(to: url) else {
+            struct PDFWriteError: Error {}
+            throw PDFWriteError()
+        }
+    }
+}
+
 
 // MARK: - Minimal EPUB bytes (mirrors EmptyTests fixture)
 

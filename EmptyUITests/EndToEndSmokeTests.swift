@@ -24,7 +24,7 @@ final class EndToEndSmokeTests: XCTestCase {
         ]
         app.launch()
 
-        XCTAssertTrue(app.buttons["‹ 书库"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["reader.back"].waitForExistence(timeout: 12))
         XCTAssertTrue(app.staticTexts["思维之书"].firstMatch.waitForExistence(timeout: 8))
 
         XCTAssertTrue(app.staticTexts["高亮 · 朱批"].waitForExistence(timeout: 8))

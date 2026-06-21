@@ -174,6 +174,7 @@ struct ReadingView: View {
     @State private var inlineInFlight: Set<Int> = []
     @State private var pretransTask: Task<Void, Never>?
     @State private var selectionInsight: ReaderSelectionInsight?
+    @State private var glossEntry: VocabEntry?
     @State private var isSelectionWorking = false
     @State private var thoughtLinks: [ThoughtLink] = []
     @State private var expandedThoughtLinkIDs: Set<String> = []
@@ -909,6 +910,11 @@ struct ReadingView: View {
                 .padding(.horizontal, 18)
             }
 
+            if let glossEntry {
+                vocabGlossCard(glossEntry)
+                    .padding(.horizontal, 18)
+            }
+
             if pendingSelection != nil {
                 selectionBar
             }
@@ -945,6 +951,7 @@ struct ReadingView: View {
             if selectionZhuOpen {
                 selectionButton("解释") { runSelectionAction(.explain) }
                 selectionButton("翻译") { runSelectionAction(.translate) }
+                selectionButton("生词") { runVocabSelection() }
                 Button {
                     if let selection = pendingSelection {
                         askCompanion(about: selection.text)
@@ -1222,6 +1229,7 @@ struct ReadingView: View {
     private func handleSelectionChange(_ selection: ReaderSelection?) {
         pendingSelection = selection
         selectionInsight = nil
+        glossEntry = nil
         if let selection {
             Task { await detectThoughtLink(for: selection.text) }
         }
@@ -1254,6 +1262,86 @@ struct ReadingView: View {
                 pendingSelection = nil
             }
         }
+    }
+
+    private func runVocabSelection() {
+        guard let selection = pendingSelection, !isSelectionWorking else { return }
+        let word = selection.text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .first { !$0.isEmpty } ?? selection.text
+        let source = "\(book.title) · \(currentSectionTitle)"
+        let sourcePosition = selectionSourcePosition(for: selection)
+        isSelectionWorking = true
+        Task {
+            defer { isSelectionWorking = false }
+            do {
+                let entry = try await VocabStore(modelContext: modelContext).lookupWithAI(
+                    word: word,
+                    sentence: selection.text,
+                    source: source,
+                    book: book,
+                    sourcePosition: sourcePosition
+                )
+                glossEntry = entry
+                pendingSelection = nil
+            } catch {
+                selectionInsight = .make(
+                    kind: .explain,
+                    subject: selection.text,
+                    body: "生词加入失败：\(error.localizedDescription)"
+                )
+                pendingSelection = nil
+            }
+        }
+    }
+
+    private func selectionSourcePosition(for selection: ReaderSelection) -> ReadingPosition {
+        let offset: Int
+        if let text = currentChapterPlainText(),
+           let range = ReaderSelectionContext.utf16Range(of: selection, in: text) {
+            offset = range.lowerBound
+        } else {
+            offset = currentUTF16Offset
+        }
+        return ReadingPosition(chapterIndex: currentChapterIndex, utf16Offset: offset)
+    }
+
+    private func vocabGlossCard(_ entry: VocabEntry) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(entry.word)
+                    .font(.system(size: 15, weight: .bold, design: .serif))
+                    .foregroundStyle(palette.ink)
+                if let phonetic = entry.phonetic {
+                    Text(phonetic)
+                        .font(.system(size: 11))
+                        .foregroundStyle(palette.ink3)
+                }
+                Spacer(minLength: 0)
+                Button("收起") { glossEntry = nil }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(palette.ink3)
+            }
+            Text(entry.meaning)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(palette.ink2)
+            if let note = entry.note, !note.isEmpty {
+                Text(note)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(palette.ink3)
+            }
+            if let source = entry.source {
+                Text(source)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(palette.ink3)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13)
+        .background(palette.card, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(palette.line, lineWidth: 1))
     }
 
     private func askCompanion(about text: String) {
@@ -1690,6 +1778,9 @@ struct ReadingView: View {
                     syncPageProgress(at: currentChapterIndex)
                 }
                 isLoading = false
+                if ProcessInfo.processInfo.arguments.contains("-OpenHighlights") {
+                    showHighlights = true
+                }
                 startSession()
                 startPretranslation()
             } catch {

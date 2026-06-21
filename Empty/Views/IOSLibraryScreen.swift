@@ -15,8 +15,11 @@ import SwiftUI
 struct IOSLibraryScreen: View {
     var onOpenBook: (Book) -> Void
     var onReview: () -> Void
+    var onOpenPosition: (Book, ReadingPosition) -> Void
+    var onAskCompanion: () -> Void
 
     @Environment(\.emptyPalette) private var palette
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Book.addedAt, order: .reverse) private var books: [Book]
     @Query private var sessions: [ReadingSession]
@@ -33,6 +36,13 @@ struct IOSLibraryScreen: View {
     @State private var errorMessage: String?
     /// "yyyy-MM-dd" of the day the reader skipped the nudge.
     @AppStorage("iosBriefSkippedDay") private var briefSkippedDay = ""
+    @State private var continueRecap: String?
+    @State private var continueChapterLabel: String?
+    @State private var continueRemainingLabel: String?
+
+    private var isRegularWidth: Bool {
+        horizontalSizeClass == .regular
+    }
 
     private var shelfBooks: [Book] {
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -60,6 +70,28 @@ struct IOSLibraryScreen: View {
         return Int(seconds / 60)
     }
 
+    private var dueReviewCount: Int {
+        let now = Date()
+        return vocabEntries.count { $0.dueAt <= now }
+            + studyCards.count { $0.dueAt <= now }
+    }
+
+    private var readingStreak: Int {
+        (try? ReadingStatsStore(modelContext: modelContext).streakDays(today: Date())) ?? 0
+    }
+
+    private var nextReviewForecast: String {
+        VocabQueueForecast.describe(dueDates: vocabEntries.map(\.dueAt), now: Date())
+    }
+
+    private var pendingAITaskCount: Int {
+        ReaderAITaskQueue.pendingCount()
+    }
+
+    private var dateLine: String {
+        Date().formatted(.dateTime.month().day().weekday(.wide))
+    }
+
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         let salutation: String = switch hour {
@@ -83,9 +115,15 @@ struct IOSLibraryScreen: View {
                 }
 
                 if let continueBook {
-                    continueCard(continueBook)
+                    continueSection(continueBook)
                         .padding(.top, 18)
                 }
+
+                todayMetrics
+                    .padding(.top, 14)
+
+                todayPulse
+                    .padding(.top, 10)
 
                 if let brief = dailyBrief {
                     briefCallout(brief)
@@ -96,6 +134,9 @@ struct IOSLibraryScreen: View {
                     emptyState
                         .padding(.top, 40)
                 } else {
+                    recentZhupiSection
+                        .padding(.top, 20)
+
                     shelfHeader
                         .padding(.top, 24)
                         .padding(.bottom, 12)
@@ -129,6 +170,9 @@ struct IOSLibraryScreen: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .task(id: continueTaskKey) {
+            await loadContinueDetails()
+        }
     }
 
     // MARK: Header
@@ -136,10 +180,10 @@ struct IOSLibraryScreen: View {
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("书库")
+                Text("今日伴读")
                     .font(.system(size: 30, weight: .black, design: .serif))
                     .foregroundStyle(palette.ink)
-                Text(greeting)
+                Text("\(dateLine) · \(greeting)")
                     .font(.system(size: 12.5))
                     .foregroundStyle(palette.ink3)
             }
@@ -209,6 +253,60 @@ struct IOSLibraryScreen: View {
         .overlay(Capsule().strokeBorder(palette.line2, lineWidth: 1))
     }
 
+    // MARK: Today
+
+    private var todayMetrics: some View {
+        HStack(spacing: 10) {
+            metricCard(value: "\(minutesToday)", label: "分钟今日")
+            metricCard(value: "\(dueReviewCount)", label: "待复习")
+            metricCard(value: "\(highlights.count)", label: "条朱批")
+        }
+    }
+
+    private func metricCard(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.system(size: 20, weight: .black, design: .serif))
+                .foregroundStyle(palette.ink)
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(palette.ink3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(palette.card, in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(palette.line, lineWidth: 1))
+    }
+
+    private var todayPulse: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("今日节奏")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(palette.accent)
+            Text(pulseLine)
+                .font(.system(size: 12))
+                .foregroundStyle(palette.ink2)
+                .lineSpacing(4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(palette.card, in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(palette.line, lineWidth: 1))
+        .accessibilityIdentifier("today.pulse.card")
+    }
+
+    private var pulseLine: String {
+        var parts = ["连续 \(readingStreak) 天"]
+        if !nextReviewForecast.isEmpty {
+            parts.append("下次队列 \(nextReviewForecast)")
+        }
+        if pendingAITaskCount > 0 {
+            parts.append("AI 待整理 \(pendingAITaskCount) 条")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     // MARK: Continue reading
 
     private func continueCard(_ book: Book) -> some View {
@@ -253,8 +351,174 @@ struct IOSLibraryScreen: View {
             .contentShape(RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("today.continue.card")
     }
 
+    private func continueSection(_ book: Book) -> some View {
+        Group {
+            if isRegularWidth {
+                HStack(alignment: .top, spacing: 14) {
+                    continueCard(book)
+                    continueRecapCard(book)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    continueCard(book)
+                    continueRecapCard(book)
+                }
+            }
+        }
+    }
+
+
+    private func continueRecapCard(_ book: Book) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("上次读到")
+                    .font(.system(size: 10, weight: .bold))
+                    .kerning(1.1)
+                    .foregroundStyle(palette.accent)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(palette.accentSoft, in: Capsule())
+                if let continueChapterLabel {
+                    Text(continueChapterLabel)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(palette.ink3)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if let continueRemainingLabel {
+                    Text(continueRemainingLabel)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(palette.ink3)
+                }
+            }
+
+            Text(continueRecapText(for: book))
+                .font(.system(size: 13))
+                .lineSpacing(5)
+                .foregroundStyle(palette.ink2)
+                .lineLimit(4)
+
+            HStack(spacing: 8) {
+                Button {
+                    onOpenBook(book)
+                } label: {
+                    Text("继续阅读")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(palette.onAccent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(palette.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onReview) {
+                    Text("去卡片页")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(palette.accentSoft, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("today.recap.openCards")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .emptyCard(palette, radius: 18)
+        .accessibilityIdentifier("today.recap.card")
+    }
+
+    private var continueTaskKey: String {
+        guard let continueBook else { return "none" }
+        return "\(continueBook.id.uuidString)|\(continueBook.position.chapterIndex)|\(continueBook.progressFraction)"
+    }
+
+    private func continueRecapText(for book: Book) -> String {
+        if let continueRecap, !continueRecap.isEmpty {
+            return continueRecap
+        }
+        if let continueChapterLabel, let continueRemainingLabel {
+            return "你上次停在\(continueChapterLabel)。照现在的速度，约 \(continueRemainingLabel) 读完整本。"
+        }
+        if let continueChapterLabel {
+            return "你上次停在\(continueChapterLabel)。点开继续，把上下文重新接起来。"
+        }
+        return "回到书里，朱会从你停下的地方继续陪你读。"
+    }
+
+    private func loadContinueDetails() async {
+        guard let continueBook else {
+            continueRecap = nil
+            continueChapterLabel = nil
+            continueRemainingLabel = nil
+            return
+        }
+
+        let bookID = continueBook.id
+        let chapterIndex = continueBook.position.chapterIndex
+        let chapters = (try? modelContext.fetch(
+            FetchDescriptor<Chapter>(
+                predicate: #Predicate { $0.bookID == bookID },
+                sortBy: [SortDescriptor(\.index)]
+            )
+        )) ?? []
+
+        continueRecap = nil
+        continueChapterLabel = nil
+        continueRemainingLabel = nil
+
+        if let current = chapters.first(where: { $0.index == chapterIndex }) {
+            var label = "第 \(chapterIndex + 1) 章"
+            if let title = current.title, !title.isEmpty {
+                label += " · \(title)"
+            }
+            continueChapterLabel = label
+        }
+
+        let totalLength = chapters.reduce(0) { $0 + $1.utf16Length }
+        continueRemainingLabel = ReadingTimeEstimate.remainingLabel(
+            totalUTF16Length: totalLength,
+            progressFraction: continueBook.progressFraction,
+            languageTag: continueBook.languageTag
+        )
+
+        if let cached = continueBook.cachedHeroRecap, !cached.isEmpty,
+           continueBook.cachedHeroRecapChapterIndex == chapterIndex {
+            continueRecap = cached
+            ReaderAITaskQueue.removeHeroRecap(bookID: continueBook.id, chapterIndex: chapterIndex)
+            return
+        }
+
+        guard chapterIndex > 0 else { return }
+        ReaderAITaskQueue.enqueueHeroRecap(bookID: continueBook.id, chapterIndex: chapterIndex)
+
+        let resolution = AIProviderRegistry.load().resolveUsableService(feature: .recap)
+        guard resolution.service.availability.isAvailable else { return }
+        do {
+            let recap = try await RecapBuilder(
+                modelContext: modelContext,
+                summarize: { text, focus in
+                    try await resolution.service.summarize(text, focus: focus)
+                }
+            ).recap(
+                for: continueBook,
+                before: ReadingPosition(chapterIndex: chapterIndex, utf16Offset: 0)
+            )
+            let trimmed = recap.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            continueRecap = trimmed
+            continueBook.cachedHeroRecap = trimmed
+            continueBook.cachedHeroRecapChapterIndex = chapterIndex
+            ReaderAITaskQueue.removeHeroRecap(bookID: continueBook.id, chapterIndex: chapterIndex)
+            try? modelContext.save()
+        } catch {
+            return
+        }
+    }
     // MARK: 朱批 · 今日伴读
 
     private struct DailyBrief {
@@ -268,9 +532,7 @@ struct IOSLibraryScreen: View {
         let today = Self.dayStamp(Date())
         guard briefSkippedDay != today else { return nil }
 
-        let now = Date()
-        let dueCount = vocabEntries.count { $0.dueAt <= now }
-            + studyCards.count { $0.dueAt <= now }
+        let dueCount = dueReviewCount
         if dueCount > 0 {
             return DailyBrief(
                 text: "你有 \(dueCount) 张卡片到了复习节点。趁记忆还热,花 3 分钟过一遍?",
@@ -301,6 +563,13 @@ struct IOSLibraryScreen: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
                     .background(palette.accent, in: Capsule())
+                Button("问朱", action: onAskCompanion)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(palette.accentSoft, in: Capsule())
                 Button("今天跳过") {
                     briefSkippedDay = Self.dayStamp(Date())
                 }
@@ -318,6 +587,101 @@ struct IOSLibraryScreen: View {
     private static func dayStamp(_ date: Date) -> String {
         let comps = Calendar.current.dateComponents([.year, .month, .day], from: date)
         return "\(comps.year ?? 0)-\(comps.month ?? 0)-\(comps.day ?? 0)"
+    }
+
+    // MARK: Recent Zhu feed
+
+    @ViewBuilder
+    private var recentZhupiSection: some View {
+        if highlights.first != nil || studyCards.first != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("朱批 · 最近")
+                        .font(.system(size: 17, weight: .black, design: .serif))
+                        .foregroundStyle(palette.ink)
+                    Spacer()
+                    Button("查看全部", action: onReview)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                }
+
+                if let highlight = highlights.first {
+                    recentHighlightRow(highlight)
+                }
+                if let card = studyCards.first {
+                    recentStudyCardRow(card)
+                }
+            }
+        }
+    }
+
+    private func recentHighlightRow(_ highlight: Highlight) -> some View {
+        Button {
+            if let book = highlight.book {
+                onOpenPosition(
+                    book,
+                    ReadingPosition(
+                        chapterIndex: highlight.chapterIndex,
+                        utf16Offset: highlight.startUTF16
+                    )
+                )
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("高亮")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(palette.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(palette.accentSoft, in: Capsule())
+                Text("\u{201C}\(highlight.textSnapshot)\u{201D}")
+                    .font(.system(size: 12.5, design: .serif))
+                    .lineSpacing(4)
+                    .foregroundStyle(palette.ink2)
+                    .lineLimit(3)
+                Text(sourceLine(for: highlight))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(palette.ink3)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(palette.card, in: RoundedRectangle(cornerRadius: 15))
+            .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(palette.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(highlight.book == nil)
+    }
+
+    private func recentStudyCardRow(_ card: StudyCardEntry) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(card.kind == .qa ? "问答卡" : card.kind == .link ? "链接卡" : "复习卡")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(palette.accent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(palette.accentSoft, in: Capsule())
+            Text(card.question)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(palette.ink)
+                .lineLimit(2)
+            Text(card.answer)
+                .font(.system(size: 11.5))
+                .foregroundStyle(palette.ink3)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(palette.card, in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(palette.line, lineWidth: 1))
+    }
+
+    private func sourceLine(for highlight: Highlight) -> String {
+        var parts: [String] = []
+        if let title = highlight.book?.title { parts.append(title) }
+        parts.append("第 \(highlight.chapterIndex + 1) 章")
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Shelf
@@ -338,7 +702,7 @@ struct IOSLibraryScreen: View {
         LazyVGrid(
             columns: Array(
                 repeating: GridItem(.flexible(), spacing: 14, alignment: .top),
-                count: 3
+                count: isRegularWidth ? 4 : 3
             ),
             spacing: 18
         ) {
