@@ -85,13 +85,13 @@ Choose the provider and run a connectivity test in the **AI Diagnostics** panel 
 
 ## ⬇️ Download
 
-The latest macOS build is produced by GitHub Actions and attached as an artifact:
+The latest macOS `.dmg` is available on the [Releases](https://github.com/DaviRain-Su/empty/releases) page:
 
-[![CI Artifact](https://img.shields.io/badge/CI%20Artifact-Empty%20macOS-blue?logo=github)](https://github.com/DaviRain-Su/empty/actions/workflows/ci.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/DaviRain-Su/empty?logo=github)](https://github.com/DaviRain-Su/empty/releases/latest)
 
-> The artifact is an **unsigned** `.dmg`. macOS Gatekeeper will warn on first open — right-click the app and choose **Open**, or allow it in **System Settings → Privacy & Security**.
+Each release is built automatically from a Git tag and includes the packaged macOS app.
 
-For a signed / notarized release suitable for wider distribution, add an Apple Developer ID certificate and notarization credentials to the CI workflow.
+> Releases are currently **unsigned / not notarized**. macOS Gatekeeper will warn on first open — right-click the app and choose **Open**, or allow it in **System Settings → Privacy & Security**. For a signed release suitable for wider distribution, add an Apple Developer ID certificate and notarization credentials to the release workflow.
 
 You can also build from source (see [Quick Start](#quick-start)).
 
@@ -276,7 +276,7 @@ open Empty.xcodeproj
 
 ## 下载
 
-最新 macOS 构建由 GitHub Actions 产出， artifact 名为 `Empty-macOS`，下载后即为 `.dmg`。注意当前为未签名版本，首次打开需在「系统设置 → 隐私与安全性」中允许。
+最新 macOS `.dmg` 见 [Releases](https://github.com/DaviRain-Su/empty/releases) 页面。每个 Release 都由 Git tag 自动触发构建并打包。注意当前为未签名版本，首次打开需在「系统设置 → 隐私与安全性」中允许。
 
 ## 参与
 

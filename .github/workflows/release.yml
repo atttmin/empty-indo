@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  macos-release:
+    name: Build and Release macOS .dmg
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build Release for macOS
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Empty.xcodeproj \
+            -scheme Empty \
+            -destination 'platform=macOS' \
+            -configuration Release \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            MACOSX_DEPLOYMENT_TARGET=15.0 \
+            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            | xcpretty
+
+      - name: Package .dmg
+        run: ./scripts/package-mac-dmg.sh DerivedData/Build/Products/Release/Empty.app
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Empty-*.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
