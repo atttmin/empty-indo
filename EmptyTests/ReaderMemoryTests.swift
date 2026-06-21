@@ -140,10 +140,19 @@ struct ReaderMemoryTests {
     @Test func recallReaderMemoryStaysInCurrentBookWhenLocalMemoryExists() async throws {
         let (container, book) = try makeFixture()
         let context = container.mainContext
-        let current = try HighlightStore(modelContext: context).createHighlight(
+
+        // Two local hits force mergeMemoryHits down the local-only branch,
+        // making this test independent of embedding-score variations across
+        // macOS / CI runners.
+        let current1 = try HighlightStore(modelContext: context).createHighlight(
             book: book, chapterIndex: 0, selection: "做减法"
         )
-        try HighlightStore(modelContext: context).updateNote(current, note: "本书里的减法主题")
+        try HighlightStore(modelContext: context).updateNote(current1, note: "本书里的减法主题")
+
+        let current2 = try HighlightStore(modelContext: context).createHighlight(
+            book: book, chapterIndex: 0, selection: "保留本质"
+        )
+        try HighlightStore(modelContext: context).updateNote(current2, note: "另一个减法主题笔记")
 
         let otherBook = Book(title: "Meditations", format: .epub)
         context.insert(otherBook)
@@ -166,7 +175,7 @@ struct ReaderMemoryTests {
 
         #expect(result.citedMemory)
         #expect(result.observation.contains("1. [本书"))
-        #expect(!result.observation.contains("2. [跨书"))
+        #expect(!result.observation.contains("[跨书"))
         #expect(result.evidenceBlocks.allSatisfy { $0.scope == .currentBook })
     }
 
