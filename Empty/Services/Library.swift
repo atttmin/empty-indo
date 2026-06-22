@@ -4,16 +4,8 @@
 //
 
 import Foundation
-import OSLog
 import SwiftData
 import UniformTypeIdentifiers
-
-private let importLog = OSLog(subsystem: "davirian.Empty", category: "import")
-
-private func logImport(_ msg: String) {
-    os_log(.info, log: importLog, "%{public}@", msg)
-    ImportLogger.write(msg)
-}
 
 nonisolated enum LibraryError: LocalizedError {
     case unsupportedFileType(String)
@@ -50,27 +42,14 @@ struct Library {
     /// and — for EPUBs — extracts real metadata, cover, and chapter text.
     @discardableResult
     func importBook(from url: URL) throws -> Book {
-        logImport("importBook called: \(url.path)")
-
         guard let format = BookFormat(fileExtension: url.pathExtension) else {
-            logImport("ERROR: unsupported extension \(url.pathExtension)")
             throw LibraryError.unsupportedFileType(url.pathExtension)
         }
-        logImport("format: \(format.rawValue)")
-
         let book = Book(
             title: url.deletingPathExtension().lastPathComponent,
             format: format
         )
-
-        do {
-            book.fileRelativePath = try fileStore.importFile(at: url, bookID: book.id)
-            logImport("file copied, relativePath: \(book.fileRelativePath ?? "nil")")
-        } catch {
-            logImport("ERROR fileStore.importFile: \(error.localizedDescription)")
-            throw error
-        }
-
+        book.fileRelativePath = try fileStore.importFile(at: url, bookID: book.id)
         modelContext.insert(book)
 
         switch format {
@@ -80,14 +59,7 @@ struct Library {
             populateFromPDF(book)
         }
 
-        do {
-            try modelContext.save()
-            logImport("modelContext.save OK")
-        } catch {
-            logImport("ERROR modelContext.save: \(error.localizedDescription)")
-            throw error
-        }
-
+        try modelContext.save()
         return book
     }
 
