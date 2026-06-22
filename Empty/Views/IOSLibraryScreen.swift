@@ -150,21 +150,17 @@ struct IOSLibraryScreen: View {
         .onAppear {
             ImportLogger.write("IOSLibraryScreen appeared at " + Date().ISO8601Format())
         }
-        .fileImporter(
-            isPresented: $isImporterPresented,
-            allowedContentTypes: Library.importableContentTypes,
-            allowsMultipleSelection: true,
-            onCompletion: { result in
-                ImportLogger.write("handleImport inline called")
-                switch result {
-                case .success(let urls):
-                    ImportLogger.write("selected " + String(urls.count) + " files")
-                case .failure(let error):
-                    ImportLogger.write("fileImporter error: " + error.localizedDescription)
+        .sheet(isPresented: $isImporterPresented) {
+            DocumentPicker(
+                contentTypes: Library.importableContentTypes,
+                allowsMultiple: true,
+                onCompletion: { result in
+                    ImportLogger.write("DocumentPicker callback fired")
+                    self.handleImport(result)
                 }
-                self.handleImport(result)
-            }
-        )
+            )
+            .ignoresSafeArea()
+        }
         .sheet(isPresented: $isDiagnosticsPresented) {
             AIDiagnosticsView()
         }
