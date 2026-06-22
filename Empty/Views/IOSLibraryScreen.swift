@@ -735,6 +735,7 @@ struct IOSLibraryScreen: View {
             }
 
             Button {
+                ImportLogger.write("import button tapped (shelf)")
                 isImporterPresented = true
             } label: {
                 RoundedRectangle(cornerRadius: 6)
@@ -776,7 +777,10 @@ struct IOSLibraryScreen: View {
                 .font(.system(size: 13))
                 .foregroundStyle(palette.ink3)
                 .multilineTextAlignment(.center)
-            Button("导入书籍") { isImporterPresented = true }
+            Button("导入书籍") {
+                ImportLogger.write("import button tapped (empty state)")
+                isImporterPresented = true
+            }
                 .buttonStyle(.plain)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(palette.onAccent)
