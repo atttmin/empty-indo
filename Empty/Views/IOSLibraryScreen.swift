@@ -11,7 +11,6 @@
 
 import SwiftData
 import SwiftUI
-}
 
 struct IOSLibraryScreen: View {
     var onOpenBook: (Book) -> Void
