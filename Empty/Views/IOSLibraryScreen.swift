@@ -150,17 +150,7 @@ struct IOSLibraryScreen: View {
         .onAppear {
             ImportLogger.write("IOSLibraryScreen appeared at " + Date().ISO8601Format())
         }
-        .sheet(isPresented: $isImporterPresented) {
-            DocumentPicker(
-                contentTypes: Library.importableContentTypes,
-                allowsMultiple: true,
-                onCompletion: { result in
-                    ImportLogger.write("DocumentPicker callback fired")
-                    self.handleImport(result)
-                }
-            )
-            .ignoresSafeArea()
-        }
+
         .sheet(isPresented: $isDiagnosticsPresented) {
             AIDiagnosticsView()
         }
@@ -741,7 +731,16 @@ struct IOSLibraryScreen: View {
 
             Button {
                 ImportLogger.write("import button tapped (shelf)")
-                isImporterPresented = true
+                DocumentPickerPresenter.pick(
+                    contentTypes: Library.importableContentTypes,
+                    allowsMultiple: true,
+                    completion: { result in
+                        ImportLogger.write("DocumentPickerPresenter callback")
+                        Task { @MainActor in
+                            self.handleImport(result)
+                        }
+                    }
+                )
             } label: {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(
@@ -784,7 +783,16 @@ struct IOSLibraryScreen: View {
                 .multilineTextAlignment(.center)
             Button("导入书籍") {
                 ImportLogger.write("import button tapped (empty state)")
-                isImporterPresented = true
+                DocumentPickerPresenter.pick(
+                    contentTypes: Library.importableContentTypes,
+                    allowsMultiple: true,
+                    completion: { result in
+                        ImportLogger.write("DocumentPickerPresenter callback")
+                        Task { @MainActor in
+                            self.handleImport(result)
+                        }
+                    }
+                )
             }
                 .buttonStyle(.plain)
                 .font(.system(size: 13, weight: .bold))
