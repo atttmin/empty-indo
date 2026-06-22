@@ -27,6 +27,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             MACOSX_DEPLOYMENT_TARGET=15.0 \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            STRING_CATALOG_GENERATE_SYMBOLS=NO \
             | xcpretty
   ios-build:
     name: Build (iOS Simulator)
@@ -44,6 +45,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             MACOSX_DEPLOYMENT_TARGET=15.0 \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            STRING_CATALOG_GENERATE_SYMBOLS=NO \
             | xcpretty
   macos-package:
     name: Build macOS .dmg
@@ -66,6 +68,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             MACOSX_DEPLOYMENT_TARGET=15.0 \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            STRING_CATALOG_GENERATE_SYMBOLS=NO \
             | xcpretty
       - name: Package .dmg
         run: ./scripts/package-mac-dmg.sh DerivedData/Build/Products/Release/Empty.app
@@ -95,6 +98,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             MACOSX_DEPLOYMENT_TARGET=15.0 \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            STRING_CATALOG_GENERATE_SYMBOLS=NO \
             | xcpretty
             
           # 导出 IPA
