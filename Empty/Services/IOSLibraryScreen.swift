@@ -9,15 +9,8 @@
 
 #if !os(macOS)
 
-import OSLog
 import SwiftData
 import SwiftUI
-
-private let uiLog = OSLog(subsystem: "davirian.Empty", category: "ui-import")
-
-private func logUI(_ msg: String) {
-    os_log(.info, log: uiLog, "%{public}@", msg)
-    ImportLogger.write(msg)
 }
 
 struct IOSLibraryScreen: View {
@@ -796,28 +789,28 @@ struct IOSLibraryScreen: View {
     // MARK: Import / delete
 
     private func handleImport(_ result: Result<[URL], Error>) {
-        logUI("handleImport called")
+        ImportLogger.write("handleImport called")
         switch result {
         case .success(let urls):
-            logUI("selected \(urls.count) file(s)")
+            ImportLogger.write("selected " + String(urls.count) + " file(s)")
             for (i, url) in urls.enumerated() {
-                logUI("  [\(i)] \(url.path)")
+                ImportLogger.write("  [" + String(i) + "] " + url.path)
             }
         case .failure(let error):
-            logUI("ERROR fileImporter: \(error.localizedDescription)")
+            ImportLogger.write("ERROR fileImporter: " + error.localizedDescription)
             errorMessage = error.localizedDescription
             return
         }
 
         do {
             let library = try Library(modelContext: modelContext)
-            logUI("Library initialized")
+            ImportLogger.write("Library initialized")
             for url in try result.get() {
                 try library.importBook(from: url)
-                logUI("book imported: \(url.lastPathComponent)")
+                ImportLogger.write("book imported: " + url.lastPathComponent)
             }
         } catch {
-            logUI("ERROR: \(error.localizedDescription)")
+            ImportLogger.write("ERROR: " + error.localizedDescription)
             errorMessage = error.localizedDescription
         }
     }
