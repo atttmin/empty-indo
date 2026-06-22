@@ -788,12 +788,23 @@ struct IOSLibraryScreen: View {
     // MARK: Import / delete
 
     private func handleImport(_ result: Result<[URL], Error>) {
+        ImportLogger.write("handleImport called")
+        switch result {
+        case .success(let urls):
+            ImportLogger.write("selected " + String(urls.count) + " files")
+        case .failure(let error):
+            ImportLogger.write("fileImporter error: " + error.localizedDescription)
+            errorMessage = error.localizedDescription
+            return
+        }
         do {
             let library = try Library(modelContext: modelContext)
+            ImportLogger.write("Library init OK")
             for url in try result.get() {
                 try library.importBook(from: url)
             }
         } catch {
+            ImportLogger.write("import error: " + error.localizedDescription)
             errorMessage = error.localizedDescription
         }
     }
